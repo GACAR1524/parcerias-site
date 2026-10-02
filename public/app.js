@@ -1,5 +1,5 @@
 /*
- * Gestão de Parcerias — Costa de Araújo
+ * Gestão geral — Costa de Araújo
  * Interface (login, painel, processos, parceiros). Toda leitura/gravação passa por
  * window.ParceriasAPI (api-rest.js no site, api-claude.js no artifact).
  */
@@ -166,7 +166,7 @@ function enterApp() {
   const whoLabel = admin ? 'Controle geral' : intern ? 'Estagiário' : tipo === 'associado' ? 'Advogado associado' : 'Parceiro';
   shell.innerHTML = `
     <header class="band"><div class="band-in">
-      <div class="brand"><img src="img/mono.png" alt="" width="160" height="185"><div><div class="brand-name">Costa de Araújo</div><div class="brand-sub">Gestão de parcerias</div></div></div>
+      <div class="brand"><img src="img/mono.png" alt="" width="160" height="185"><div><div class="brand-name">Costa de Araújo</div><div class="brand-sub">Gestão geral</div></div></div>
       <div class="band-right">
         <div class="who"><b>${esc(S.session.nome || S.session.usuario)}</b><span>${whoLabel}</span></div>
         ${admin && api.features.backup ? '<a class="btn btn-ghost btn-sm" id="btn-backup" href="api/backup" title="Baixar uma cópia de segurança do banco de dados">Backup</a>' : ''}
@@ -1740,7 +1740,7 @@ function openPartnerForm(p, presetTipo) {
 function showCredentials(nome, usuario, senha, created) {
   const link = location.href.split('#')[0].split('?')[0];
   const extra = api.mode === 'claude' ? '\n\nEntre com a sua conta Claude (a mesma do e-mail convidado) e depois use este usuário e senha.' : '';
-  const msg = `Olá, ${nome}! Seu acesso ao sistema de parcerias do escritório Costa de Araújo:\nLink: ${link}\nUsuário: ${usuario}\nSenha: ${senha}${extra}`;
+  const msg = `Olá, ${nome}! Seu acesso ao sistema de gestão do escritório Costa de Araújo:\nLink: ${link}\nUsuário: ${usuario}\nSenha: ${senha}${extra}`;
   openSheet(created ? 'Acesso criado' : 'Nova senha definida', `
     <p>Envie estes dados à pessoa. A senha não fica visível depois que esta janela for fechada.</p>
     <div class="copybox">

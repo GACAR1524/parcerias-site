@@ -1,5 +1,5 @@
 /*
- * Gestão de Parcerias — Costa de Araújo
+ * Gestão geral — Costa de Araújo
  * Servidor HTTP: serve o front-end estático (public/) e a API JSON (/api).
  */
 require('dotenv').config();
@@ -99,4 +99,4 @@ const PUBLIC = path.join(__dirname, '..', 'public');
 app.use(express.static(PUBLIC, { maxAge: '1h', etag: true, index: 'index.html' }));
 app.get('*', (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
 
-app.listen(PORT, () => console.log(`Parcerias Costa de Araújo rodando na porta ${PORT} (banco: ${DB_PATH})`));
+app.listen(PORT, () => console.log(`Gestão geral Costa de Araújo rodando na porta ${PORT} (banco: ${DB_PATH})`));
