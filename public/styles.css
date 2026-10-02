@@ -218,8 +218,9 @@ legend{padding:0 6px;font-size:.78rem;letter-spacing:.08em;text-transform:upperc
 .login-brand{background:var(--band);padding:34px 28px 26px;text-align:center;border-bottom:1px solid var(--band-line)}
 .login-brand img{width:min(300px,80%);height:auto;display:block;margin:0 auto}
 .login-body{padding:24px 28px 26px}
-.login-body h1{font-family:var(--font-display);font-size:1.6rem;font-weight:600;margin-bottom:2px}
-.login-body .lead{color:var(--fg-2);margin:0 0 18px;font-size:.92rem}
+.login-body h1{font-family:var(--font-display);font-size:2.1rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;text-align:center;margin:2px 0 10px;line-height:1.1;color:var(--fg)}
+.login-body h1::after{content:"";display:block;width:56px;height:2px;background:var(--gold);margin:12px auto 0;border-radius:2px}
+.login-body .lead{color:var(--fg-2);margin:0 0 20px;font-size:.9rem;text-align:center;line-height:1.5}
 .login-body .btn-primary{width:100%;min-height:44px;font-size:1rem;margin-top:4px}
 .status{margin-top:14px;font-size:.85rem;color:var(--muted);text-align:center;min-height:1.3em}
 .status.bad{color:var(--bad)}
