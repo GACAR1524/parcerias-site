@@ -1,0 +1,28 @@
+{
+  "name": "parcerias-costa-de-araujo",
+  "version": "1.0.0",
+  "description": "Sistema de gestão de parcerias do escritório Costa de Araújo — Advocacia & Consultoria Jurídica",
+  "private": true,
+  "main": "server/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "admin": "node scripts/admin.js",
+    "import": "node scripts/import-csv.js",
+    "backup": "node scripts/backup.js",
+    "build:artifact": "node build/build-artifact.mjs",
+    "test": "node test/smoke.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "compression": "^1.7.4",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

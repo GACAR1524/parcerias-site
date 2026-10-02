@@ -1,0 +1,9 @@
+node_modules
+.env
+data
+backups
+dist
+build
+test
+*.md
+.git

@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DB_PATH=/data/parcerias.db
+      - BACKUP_DIR=/data/backups
+      - COOKIE_SECURE=true
+      - TRUST_PROXY=1
+    volumes:
+      - dados:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  dados:
+  caddy_data:
+  caddy_config:
