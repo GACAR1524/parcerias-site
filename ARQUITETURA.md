@@ -230,7 +230,7 @@ No artifact, as mesmas entidades vivem nas coleções `config/settings`, `partne
 | **Contratos com empresas** | `contracts` | uma receita *Contratos com empresas* por mês (`contract_id` + `competencia`) |
 | **Honorários próprios e outras** | lançamentos sem vínculo | receitas digitadas à mão (ex.: honorários iniciais avulsos) |
 
-### Equipe e controle de ponto
+### Equipe e controle de horário dos colaboradores (ponto)
 
 Três tipos de pessoa vivem na tabela `partners`, cada uma com login próprio (`users.role = partner`;
 o `tipo` vai na sessão): **parceiro** (vê e grava só os próprios processos), **associado** (processos
@@ -406,7 +406,9 @@ flowchart TB
   A --> V[(volume /data\nparcerias.db · backups/)]
 ```
 
-- `docker-compose.yml` sobe `app` + `caddy`; o banco fica no volume `dados`.
+- `docker-compose.yml` sobe `app` + `caddy`; o banco fica no volume `dados`. `deploy/install.sh`
+  faz a instalação completa em um VPS novo e agenda backup diário e `deploy/update.sh` (atualização
+  automática a partir do repositório). `GET /api/backup` (admin) entrega uma cópia consistente do banco.
 - `npm run backup` usa a API de backup online do SQLite (cópia consistente com o sistema no ar)
   e mantém 30 arquivos. Agende no cron.
 - Atualização: `git pull` (ou novo envio) + `docker compose up -d --build`. O esquema é criado

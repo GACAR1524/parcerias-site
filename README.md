@@ -13,7 +13,7 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
   contratos, os salários e bonificações dos associados; receitas parceladas ficam como
   **créditos provisionados** até a baixa.
 
-- **Ponto** da equipe: advogados associados e estagiários batem entrada, volta do almoço e saída
+- **Controle de horário dos colaboradores**: advogados associados e estagiários registram entrada, volta do almoço e saída
   pelo celular; a presença é comprovada por **localização (GPS)** e pela **rede do escritório (IP)**,
   e o que vier de fora fica pendente para a administração aprovar. Espelho mensal, atrasos, faltas,
   saldo de horas, ajustes e exportação.
@@ -39,6 +39,26 @@ usam exatamente o mesmo código de tela; só a camada de dados muda (veja `ARQUI
 Hospedagem compartilhada tradicional (cPanel só com PHP) **não serve**: o sistema roda em Node.js.
 
 ## 2. Instalação em VPS com Docker (caminho recomendado)
+
+### 2a. Instalação automática (um comando)
+
+Com o código em um repositório Git (GitHub privado, por exemplo) e o domínio apontando para o IP
+do servidor, basta rodar, como root, no terminal do VPS (SSH ou terminal do painel da hospedagem):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/parcerias-site/main/deploy/install.sh \
+  | bash -s -- sistema.seudominio.com.br https://SEU_TOKEN@github.com/SEU_USUARIO/parcerias-site.git
+```
+
+O `deploy/install.sh` instala o Docker, clona o código em `/opt/parcerias-site`, gera o `.env`
+(segredo da sessão e domínio), sobe app + Caddy com HTTPS automático, ativa o firewall e as
+atualizações de segurança do Ubuntu e agenda: **backup diário** às 3h (volume `/data/backups`) e
+**atualização automática** às 4h30 (`parcerias-update`: baixa o código novo do repositório e
+reconstrói só quando houver mudança — um backup é feito antes). Para atualizar na hora:
+`parcerias-update`. O administrador também pode baixar uma cópia do banco a qualquer momento pelo
+botão **Backup** no topo do sistema.
+
+### 2b. Instalação manual
 
 Tudo é feito com o terminal do servidor (SSH). Os comandos abaixo são para Ubuntu.
 
@@ -163,7 +183,7 @@ parcerias-site/
 ├── public/                # front-end (idêntico nas duas versões)
 │   ├── index.html         # marcação da tela
 │   ├── styles.css         # identidade visual (preto/dourado, temas claro e escuro)
-│   ├── app.js             # interface: login, visão geral por braço, processos, equipe (parceiros, associados, estagiários), créditos, contratos, financeiro, ponto
+│   ├── app.js             # interface: login, visão geral por braço, processos, equipe (parceiros, associados, estagiários), créditos, contratos, financeiro, controle de horário
 │   ├── api-rest.js        # adaptador de dados do SITE (fala com /api)
 │   ├── api-claude.js      # adaptador de dados do ARTIFACT (banco do Claude)
 │   └── img/               # logo
@@ -174,6 +194,7 @@ parcerias-site/
 │   ├── validate.js        # validação das entradas
 │   └── routes/            # auth, partners, cases, credits, finance, contracts, ponto
 ├── scripts/               # admin (CLI), import-csv, backup
+├── deploy/                # install.sh (instalação automática no VPS) e update.sh (atualização)
 ├── build/                 # gera a versão artifact a partir de public/
 ├── test/                  # smoke (API), e2e (navegador, site) e artifact (navegador, versão Claude)
 ├── Dockerfile · docker-compose.yml · Caddyfile · .env.example
