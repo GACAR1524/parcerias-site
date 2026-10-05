@@ -296,6 +296,19 @@ Financeiro. Os **honorários iniciais** não fazem parte do processo: são recei
 (categoria *Honorários iniciais*, à vista ou parcelada), com o campo opcional "processo relacionado"
 (`case_id`) para ficarem vinculados ao processo.
 
+**Base de cálculo dos honorários finais (`base_honorarios`).** Em qualquer processo, os honorários
+de êxito podem ser: *valor_causa* (% sobre o valor pretendido da ação; julgado, % da condenação),
+*reducao_debito* (**defesa do executado**: % sobre a redução conseguida no débito — `valor_debito`
+cobrado na execução − `valor_devido` que entendemos devido; julgado, − `valor_reconhecido` na
+decisão) ou *fixo* (valor combinado, digitado). O servidor calcula `honorarios_pretendidos` quando
+não vier informado; a tela sugere a base "redução do débito" para tipos de ação com "executado /
+embargos / impugnação" e marca o processo com a etiqueta EXECUTADO. Processos de parceria
+anteriores à v10 ficam como *fixo*. **Honorários iniciais** pagos pelo cliente ficam em
+`honorarios_iniciais` (informativo); o dinheiro entra pelo Financeiro — a administração lança a
+receita *Honorários iniciais* vinculada ao processo (à vista ou parcelada) a partir do próprio
+cadastro ("Lançar no Financeiro ao salvar" / "Lançar agora"), e a tabela avisa quando há valor
+informado ainda não lançado.
+
 **Valor da condenação em qualquer processo.** O campo `valor_condenacao` vale para todos os
 processos quando julgados (opcional nas parcerias, onde a divisão continua incidindo sobre os
 honorários); em curso, o valor pretendido da ação é opcional nas parcerias.
@@ -345,7 +358,7 @@ Quando um processo passa a **Finalizado e recebido**:
 - No site a regra roda no servidor (`settleFinance`, em `routes/cases.js`, dentro da mesma transação); no artifact, no adaptador `api-claude.js`, que só consegue gravar em `finance` quando o usuário é o proprietário.
 
 Esquema versionado: `schema_version` guarda a versão atual e `db.js` aplica migrações numeradas
-ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
+ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
 
 ## 4. API REST
 

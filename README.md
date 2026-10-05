@@ -4,8 +4,9 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
 
 - **Processos** — em parceria com advogados parceiros (divisão por %), com advogados
   associados (salário fixo + bonificação por processo) ou somente do escritório (valor pretendido
-  da ação × nossa % de honorários finais), com custo de leads, corretores, fase (em curso →
-  julgado, com valor da condenação) e situação (quanto recebemos);
+  da ação × nossa % de honorários finais), com honorários iniciais pagos, custo de leads,
+  corretores, fase (em curso → julgado, com valor da condenação) e situação (quanto recebemos);
+  na defesa do executado, os honorários finais incidem sobre a redução conseguida no débito;
 - **Compra de créditos** judiciais, com possível data de recebimento e linha do tempo;
 - **Contratos com empresas** (prestação de serviços com valor mensal);
 - **Financeiro** mensal (receitas × despesas, lucro/prejuízo), que recebe automaticamente os

@@ -312,6 +312,8 @@ input[type=radio]{accent-color:var(--gold)}
 .grid-ct td.cell:hover{outline:2px solid var(--gold);outline-offset:-2px}
 .grid-ct tbody tr{cursor:default}
 .tag.esc{color:var(--fg-2);border-color:var(--line-2);background:var(--surface-2)}
+.tag.exe{color:var(--s4);border-color:var(--s4)}
+.subhead{font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:4px 0 8px}
 .calc{min-height:40px;display:flex;align-items:center;padding:8px 11px;border-radius:var(--radius-s);background:var(--gold-wash);font-weight:600;font-variant-numeric:tabular-nums}
 .kind{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-top:2px}
 .kind.assoc{color:var(--s2)}

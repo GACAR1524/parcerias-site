@@ -33,12 +33,19 @@ function caseInput(b) {
   if (!['em_andamento', 'recebido', 'perdido'].includes(resultado)) fail('Situação inválida: use em_andamento, recebido ou perdido.');
   const titularidade = str(b.titularidade || (b.parceiroId ? 'parceria' : 'escritorio'), 20).toLowerCase();
   if (titularidade !== 'parceria' && titularidade !== 'escritorio') fail('Titularidade inválida: use parceria ou escritorio.');
+  const baseHonorarios = str(b.baseHonorarios || (titularidade === 'escritorio' ? 'valor_causa' : 'fixo'), 20).toLowerCase();
+  if (!['valor_causa', 'reducao_debito', 'fixo'].includes(baseHonorarios)) fail('Base dos honorários inválida: use valor_causa, reducao_debito ou fixo.');
   const c = {
     parceiroId: titularidade === 'escritorio' ? null : str(b.parceiroId, 64),
     titularidade,
     valorAcao: b.valorAcao == null || b.valorAcao === '' ? null : money(b.valorAcao),
     valorCondenacao: fase === 'julgado' && b.valorCondenacao != null && b.valorCondenacao !== '' ? money(b.valorCondenacao) : null,
-    pctHonorarios: titularidade === 'escritorio' && b.pctHonorarios != null && b.pctHonorarios !== '' ? pctv(b.pctHonorarios) : null,
+    baseHonorarios,
+    valorDebito: baseHonorarios === 'reducao_debito' && b.valorDebito != null && b.valorDebito !== '' ? money(b.valorDebito) : null,
+    valorDevido: baseHonorarios === 'reducao_debito' && b.valorDevido != null && b.valorDevido !== '' ? money(b.valorDevido) : null,
+    valorReconhecido: baseHonorarios === 'reducao_debito' && fase === 'julgado' && b.valorReconhecido != null && b.valorReconhecido !== '' ? money(b.valorReconhecido) : null,
+    honorariosIniciais: money(b.honorariosIniciais ?? 0),
+    pctHonorarios: baseHonorarios !== 'fixo' && b.pctHonorarios != null && b.pctHonorarios !== '' ? pctv(b.pctHonorarios) : null,
     natureza, fase, resultado,
     numeroProcesso: natureza === 'judicial' ? cnj(str(b.numeroProcesso, 40)) : str(b.numeroProcesso, 60),
     cliente: str(b.cliente, 160),
@@ -55,12 +62,15 @@ function caseInput(b) {
     observacoes: str(b.observacoes, 4000)
   };
   if (titularidade === 'parceria' && !c.parceiroId) fail('Selecione o advogado parceiro ou associado.');
-  if (titularidade === 'escritorio') {
-    c.pctParceiro = 0; c.pctNosso = 100; c.fluxoRecebimento = 'escritorio';
-    // honorários do escritório = % sobre o valor pretendido (em curso) ou sobre a condenação (julgado), salvo valor informado à mão
-    const base = fase === 'julgado' && c.valorCondenacao != null ? c.valorCondenacao : c.valorAcao;
-    if (!(c.honorariosPretendidos > 0) && base != null && c.pctHonorarios != null) c.honorariosPretendidos = Math.round(base * c.pctHonorarios) / 100;
+  if (titularidade === 'escritorio') { c.pctParceiro = 0; c.pctNosso = 100; c.fluxoRecebimento = 'escritorio'; }
+  // honorários finais = % sobre a base (valor da causa/condenação ou redução do débito), salvo valor informado à mão
+  if (baseHonorarios !== 'fixo' && !(c.honorariosPretendidos > 0) && c.pctHonorarios != null) {
+    let base = null;
+    if (baseHonorarios === 'valor_causa') base = fase === 'julgado' && c.valorCondenacao != null ? c.valorCondenacao : c.valorAcao;
+    else { const alvo = fase === 'julgado' && c.valorReconhecido != null ? c.valorReconhecido : c.valorDevido; if (c.valorDebito != null && alvo != null) base = Math.max(0, c.valorDebito - alvo); }
+    if (base != null) c.honorariosPretendidos = Math.round(base * c.pctHonorarios) / 100;
   }
+  if (baseHonorarios === 'reducao_debito' && c.valorDebito != null && c.valorDevido != null && c.valorDevido > c.valorDebito) fail('O valor que entendemos devido não pode ser maior que o valor cobrado na execução.');
   if (!c.numeroProcesso) fail('Informe o número do processo.');
   if (!c.cliente) fail('Informe o nome do cliente.');
   if (!c.tipoAcao) fail('Informe o tipo de ação.');

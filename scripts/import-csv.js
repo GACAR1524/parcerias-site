@@ -48,7 +48,7 @@ const tempPassword = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrs
     drec: col('Data do recebimento'), cor: col('Corretor'), ncor: col('Nome do corretor'), vcor: col('Valor do corretor'), corPago: col('Corretor pago'), obs: col('Observações')
   };
   for (const [k, v] of Object.entries(C)) if (v < 0) { console.error(`Coluna não encontrada no CSV: ${k}`); process.exit(1); }
-  const cNat = col('Natureza'), cFase = col('Fase'), cSit = col('Situação'), cVA = col('Valor da ação'), cVC = col('Valor da condenação'), cPH = col('% honorários (escritório)'); // opcionais (exportações antigas não têm)
+  const cNat = col('Natureza'), cFase = col('Fase'), cSit = col('Situação'), cVA = col('Valor da ação'), cVC = col('Valor da condenação'), cPH = col('% honorários finais') >= 0 ? col('% honorários finais') : col('% honorários (escritório)'), cBase = col('Base dos honorários'), cDeb = col('Débito cobrado'), cDev = col('Valor devido'), cRec = col('Valor reconhecido'), cHI = col('Honorários iniciais'); // opcionais (exportações antigas não têm)
 
   const findPartner = db.prepare('SELECT id FROM partners WHERE lower(nome) = lower(?)');
   const userTaken = db.prepare('SELECT 1 FROM users WHERE usuario = ?');
@@ -58,7 +58,9 @@ const tempPassword = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrs
 
   const tx = db.transaction(async () => {});
   void tx;
+  const baseFrom = (txt, office) => { const t = String(txt || '').toLowerCase(); return /redu/.test(t) ? 'reducao_debito' : /causa/.test(t) ? 'valor_causa' : /combin|fixo/.test(t) ? 'fixo' : (office ? 'valor_causa' : 'fixo'); };
   for (const r of rows) {
+    const optMoney = ci => ci >= 0 && String(r[ci] || '').trim() ? money(r[ci]) : null;
     const nome = (r[C.parceiro] || '').trim();
     const office = isOffice(nome);
     let p = office ? null : findPartner.get(nome);
@@ -79,10 +81,10 @@ const tempPassword = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrs
     const fase = cFase >= 0 && /^julg/i.test(String(r[cFase] || '')) ? 'julgado' : 'em_curso';
     const sit = cSit >= 0 ? String(r[cSit] || '').toLowerCase() : '';
     const resultado = /perdid/.test(sit) ? 'perdido' : (rec || /receb/.test(sit)) ? 'recebido' : 'em_andamento';
-    db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, natureza, fase, resultado, financeiro_status, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
+    db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, natureza, fase, resultado, financeiro_status, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
       recebido, valor_recebido, data_recebimento, tem_corretor, nome_corretor, valor_corretor, corretor_pago, observacoes, criado_por, criado_em, atualizado_em)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(uuid(), pid, office ? 'escritorio' : 'parceria', cVA >= 0 && String(r[cVA] || '').trim() ? money(r[cVA]) : null, cVC >= 0 && String(r[cVC] || '').trim() ? money(r[cVC]) : null, office && cPH >= 0 && String(r[cPH] || '').trim() ? money(r[cPH]) : null, natureza, fase, resultado, resultado === 'recebido' ? 'pendente' : 'nao', numero, r[C.cliente] || '', r[C.tipo] || '', dateBR(r[C.data]) || now.slice(0, 10), money(r[C.hon]), money(r[C.lead]), office ? 0 : money(r[C.pp]), office ? 100 : money(r[C.pn]),
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(uuid(), pid, office ? 'escritorio' : 'parceria', cVA >= 0 && String(r[cVA] || '').trim() ? money(r[cVA]) : null, cVC >= 0 && String(r[cVC] || '').trim() ? money(r[cVC]) : null, cPH >= 0 && String(r[cPH] || '').trim() ? money(r[cPH]) : null, baseFrom(cBase >= 0 ? r[cBase] : '', office), optMoney(cDeb), optMoney(cDev), optMoney(cRec), cHI >= 0 ? money(r[cHI]) : 0, natureza, fase, resultado, resultado === 'recebido' ? 'pendente' : 'nao', numero, r[C.cliente] || '', r[C.tipo] || '', dateBR(r[C.data]) || now.slice(0, 10), money(r[C.hon]), money(r[C.lead]), office ? 0 : money(r[C.pp]), office ? 100 : money(r[C.pn]),
         resultado === 'recebido' ? 1 : 0, resultado === 'recebido' ? money(r[C.vrec]) : null, resultado === 'recebido' ? dateBR(r[C.drec]) : null, cor ? 1 : 0, cor ? (r[C.ncor] || '') : '', cor ? money(r[C.vcor]) : 0, cor && sim(r[C.corPago]) ? 1 : 0, r[C.obs] || '', 'importacao', now, now);
     inserted++;
   }

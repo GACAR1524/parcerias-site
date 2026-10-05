@@ -280,6 +280,26 @@ try {
   fin = await finance();
   check('excluir crédito desvincula a despesa já lançada', r.status === 200 && fin.filter(e => e.creditId === crid2).length === 0 && fin.some(e => e.categoria === 'Compra de créditos' && e.creditId === null), fin);
 
+  // ---- honorários: base de cálculo (valor da causa / redução do débito / combinado) e honorários iniciais ----
+  r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800007-77.2026.8.17.0001', cliente: 'Executado Ltda', tipoAcao: 'Defesa do executado (embargos / impugnação)', dataProtocolo: '2026-10-01', baseHonorarios: 'reducao_debito', valorDebito: 200000, valorDevido: 120000, pctHonorarios: 25, honorariosIniciais: 5000 });
+  check('defesa do executado: honorários previstos = 25% da redução pretendida (200 mil − 120 mil = 80 mil → 20 mil)', r.status === 201 && r.data.case.baseHonorarios === 'reducao_debito' && r.data.case.valorDebito === 200000 && r.data.case.valorDevido === 120000 && r.data.case.honorariosPretendidos === 20000 && r.data.case.honorariosIniciais === 5000 && r.data.case.valorAcao === null, r);
+  const cidX = r.data.id;
+  r = await call('a', 'PUT', `/cases/${cidX}`, { titularidade: 'escritorio', numeroProcesso: '0800007-77.2026.8.17.0001', cliente: 'Executado Ltda', tipoAcao: 'Defesa do executado (embargos / impugnação)', dataProtocolo: '2026-10-01', baseHonorarios: 'reducao_debito', valorDebito: 200000, valorDevido: 120000, valorReconhecido: 130000, pctHonorarios: 25, honorariosIniciais: 5000, fase: 'julgado' });
+  check('julgado: honorários recalculados sobre a redução obtida (200 mil − 130 mil = 70 mil → 17,5 mil)', r.status === 200 && r.data.case.valorReconhecido === 130000 && r.data.case.honorariosPretendidos === 17500, r);
+  r = await call('a', 'PUT', `/cases/${cidX}`, { titularidade: 'escritorio', numeroProcesso: '0800007-77.2026.8.17.0001', cliente: 'Executado Ltda', tipoAcao: 'Defesa', dataProtocolo: '2026-10-01', baseHonorarios: 'reducao_debito', valorDebito: 100000, valorDevido: 120000, pctHonorarios: 25 });
+  check('valor devido maior que o cobrado é recusado', r.status === 400, r);
+  r = await call('a', 'PUT', `/cases/${cidX}`, { titularidade: 'escritorio', numeroProcesso: '0800007-77.2026.8.17.0001', cliente: 'Executado Ltda', tipoAcao: 'Defesa', dataProtocolo: '2026-10-01', baseHonorarios: 'fixo', honorariosPretendidos: 9000, honorariosIniciais: 5000 });
+  check('valor combinado: honorários informados diretamente, sem % nem base', r.status === 200 && r.data.case.baseHonorarios === 'fixo' && r.data.case.honorariosPretendidos === 9000 && r.data.case.pctHonorarios === null && r.data.case.valorDebito === null, r);
+  r = await call('a', 'PUT', `/cases/${cidX}`, { titularidade: 'escritorio', numeroProcesso: '0800007-77.2026.8.17.0001', cliente: 'Executado Ltda', tipoAcao: 'Defesa', dataProtocolo: '2026-10-01', baseHonorarios: 'moeda' });
+  check('base de honorários desconhecida é recusada', r.status === 400, r);
+  r = await call('a', 'POST', '/cases', { ...caso, parceiroId: pid, numeroProcesso: '0800008-88.2026.8.17.0001', cliente: 'Parceria Executado', baseHonorarios: 'reducao_debito', valorDebito: 50000, valorDevido: 30000, pctHonorarios: 30, honorariosPretendidos: 0 });
+  check('parceria com base na redução: honorários totais 30% de 20 mil = 6 mil, divididos pelos percentuais do parceiro', r.status === 201 && r.data.case.honorariosPretendidos === 6000 && r.data.case.pctParceiro === 40 && r.data.case.pctNosso === 60, r);
+  await call('a', 'DELETE', `/cases/${r.data.id}`);
+  r = await call('a', 'GET', '/bootstrap');
+  const legacy = r.data.cases.find(x => x.id === cid);
+  check('processo de parceria antigo fica como "valor combinado"', legacy && legacy.baseHonorarios === 'fixo' && legacy.honorariosIniciais === 0, legacy);
+  await call('a', 'DELETE', `/cases/${cidX}`);
+
   // ---- estagiários e controle de ponto ----
   r = await call('a', 'POST', '/partners', { tipo: 'estagiario', nome: 'Pedro Lima', usuario: 'pedro', senha: 'estagio1', curso: 'Direito', instituicao: 'UFMA', bolsa: 900, jornada: { dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00']] } });
   check('admin cadastra estagiário com bolsa e jornada da manhã', r.status === 201 && r.data.partner.tipo === 'estagiario' && r.data.partner.bolsa === 900 && r.data.partner.jornada.blocos.length === 1 && r.data.partner.pctNossoPadrao === 100, r);

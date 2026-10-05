@@ -90,6 +90,11 @@ CREATE TABLE IF NOT EXISTS cases (
   valor_acao REAL,
   valor_condenacao REAL,
   pct_honorarios REAL,
+  base_honorarios TEXT NOT NULL DEFAULT 'valor_causa',
+  valor_debito REAL,
+  valor_devido REAL,
+  valor_reconhecido REAL,
+  honorarios_iniciais REAL NOT NULL DEFAULT 0,
   natureza TEXT NOT NULL DEFAULT 'judicial',
   fase TEXT NOT NULL DEFAULT 'em_curso',
   resultado TEXT NOT NULL DEFAULT 'em_andamento',
@@ -203,7 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_criado ON audit_log(criado_em);
 db.exec(SCHEMA);
 
 /* ---------- migrações (bancos criados por versões anteriores) ---------- */
-const CURRENT_VERSION = 9;
+const CURRENT_VERSION = 10;
 const MIGRATIONS = {
   // v2: possível data de recebimento nas compras de crédito
   2: () => {
@@ -300,6 +305,19 @@ const MIGRATIONS = {
     add('partners', 'bolsa', 'bolsa REAL NOT NULL DEFAULT 0');
     add('partners', 'jornada', 'jornada TEXT');
     // time_entries e settings já são criadas pelo SCHEMA (CREATE TABLE IF NOT EXISTS) ao subir
+  },
+  // v10: base de cálculo dos honorários finais (valor da causa | redução do débito | valor combinado) e honorários iniciais pagos
+  10: () => {
+    const has = (t, c) => db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c);
+    const add = (t, c, ddl) => { if (!has(t, c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${ddl}`); };
+    const nova = !has('cases', 'base_honorarios');
+    add('cases', 'base_honorarios', "base_honorarios TEXT NOT NULL DEFAULT 'valor_causa'");
+    add('cases', 'valor_debito', 'valor_debito REAL');
+    add('cases', 'valor_devido', 'valor_devido REAL');
+    add('cases', 'valor_reconhecido', 'valor_reconhecido REAL');
+    add('cases', 'honorarios_iniciais', 'honorarios_iniciais REAL NOT NULL DEFAULT 0');
+    // processos de parceria antigos tinham honorários informados em valor fixo
+    if (nova) db.exec("UPDATE cases SET base_honorarios = 'fixo' WHERE titularidade <> 'escritorio' OR partner_id IS NOT NULL");
   }
 };
 const verRow = db.prepare('SELECT version FROM schema_version').get();
@@ -355,6 +373,7 @@ function caseRow(r) {
   if (!r) return null;
   return {
     id: r.id, parceiroId: r.partner_id || null, titularidade: r.titularidade || (r.partner_id ? 'parceria' : 'escritorio'), valorAcao: r.valor_acao, valorCondenacao: r.valor_condenacao, pctHonorarios: r.pct_honorarios,
+    baseHonorarios: r.base_honorarios || (r.partner_id ? 'fixo' : 'valor_causa'), valorDebito: r.valor_debito, valorDevido: r.valor_devido, valorReconhecido: r.valor_reconhecido, honorariosIniciais: r.honorarios_iniciais || 0,
     natureza: r.natureza || 'judicial', fase: r.fase || 'em_curso', resultado: r.resultado || (r.recebido ? 'recebido' : 'em_andamento'),
     numeroProcesso: r.numero_processo, cliente: r.cliente, tipoAcao: r.tipo_acao || '',
     dataProtocolo: r.data_protocolo, honorariosPretendidos: r.honorarios_pretendidos, custoLead: r.custo_lead,

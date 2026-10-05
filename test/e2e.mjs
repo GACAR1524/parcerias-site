@@ -169,6 +169,37 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Cliente Direto')), null, { timeout: 5000 });
   check('ao salvar não abre formulário de receita; processo aparece com etiqueta ESCRITÓRIO e honorários previstos', !(await page.$('#fn-form')) && (await page.textContent('tr[data-id]:has-text("Cliente Direto")')).includes('ESCRITÓRIO') && (await page.textContent('tr[data-id]:has-text("Cliente Direto")')).replace(/\u00a0/g, ' ').includes('8.000,00'));
 
+  // defesa do executado: honorários sobre a redução do débito + honorários iniciais pagos
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.check('#c-tit-esc'); await page.waitForTimeout(100);
+  await page.fill('#c-num', '08077777720268170001'); await page.fill('#c-cliente', 'Executado Ltda');
+  await page.fill('#c-tipo', 'Defesa do executado (embargos / impugnação)'); await page.press('#c-tipo', 'Tab'); await page.waitForTimeout(100);
+  check('tipo "defesa do executado" sugere a base "redução do débito" e 25%', await page.isChecked('#c-base-red') && await page.isVisible('#c-red-fields') && (await page.inputValue('#c-phon')) === '25');
+  await page.fill('#c-vdeb', '200000'); await page.fill('#c-vdev', '120000'); await page.press('#c-vdev', 'Tab'); await page.waitForTimeout(100);
+  check('redução pretendida de R$ 80.000 e honorários de 25% = R$ 20.000', /80\.000,00/.test((await page.textContent('#c-red-hint')).replace(/\u00a0/g, ' ')) && (await page.inputValue('#c-hon')) === '20.000,00');
+  await page.fill('#c-hini', '5000'); await page.press('#c-hini', 'Tab'); await page.waitForTimeout(100);
+  check('honorários iniciais pagos oferecem o lançamento no Financeiro ao salvar', await page.isChecked('#c-hini-fin'));
+  await page.uncheck('#c-hini-fin');
+  await page.click('#c-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Executado Ltda')), null, { timeout: 5000 });
+  const rowExe = (await page.textContent('tr[data-id]:has-text("Executado Ltda")')).replace(/\u00a0/g, ' ');
+  check('tabela mostra a etiqueta EXECUTADO, a redução e os honorários iniciais a lançar', /EXECUTADO/.test(rowExe) && /sobre a redução de R\$ 80 mil/.test(rowExe) && /iniciais R\$ 5\.000,00/.test(rowExe) && /lançar/.test(rowExe));
+  await page.click('tr[data-id]:has-text("Executado Ltda")'); await page.waitForSelector('#case-form');
+  check('ao reabrir, os valores da defesa do executado voltam preenchidos', (await page.inputValue('#c-vdeb')) === '200.000,00' && (await page.inputValue('#c-vdev')) === '120.000,00' && await page.isChecked('#c-base-red') && (await page.inputValue('#c-hini')) === '5.000,00' && !!(await page.$('#c-hini-go')));
+  await page.check('#c-fase-julg'); await page.waitForTimeout(100);
+  check('julgado pede o valor reconhecido na decisão', await page.isVisible('#c-vrecon-field'));
+  await page.fill('#c-vrecon', '130000'); await page.press('#c-vrecon', 'Tab'); await page.waitForTimeout(100);
+  check('honorários recalculados sobre a redução obtida (70 mil → 17.500)', (await page.inputValue('#c-hon')) === '17.500,00');
+  await page.click('#c-hini-go'); await page.waitForSelector('#fn-form', { timeout: 5000 });
+  check('"Lançar agora" abre a receita de honorários iniciais vinculada ao processo', (await page.inputValue('#fn-cat')) === 'Honorários iniciais' && (await page.inputValue('#fn-valor')) === '5.000,00' && (await page.$eval('#fn-case', s => s.selectedOptions[0].textContent)).includes('Executado Ltda'));
+  await page.click('#fn-save'); await page.waitForFunction(() => !document.querySelector('#fn-form'), null, { timeout: 5000 });
+  await page.click('[data-tab="cases"]'); await page.waitForSelector('tr[data-id]');
+  check('depois do lançamento a tabela não pede mais para lançar', !/lançar/.test(await page.textContent('tr[data-id]:has-text("Executado Ltda")')));
+  // volta à parceria: base padrão "valor combinado"
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  check('processo de parceria começa com honorários em valor combinado (campo direto)', await page.isChecked('#c-base-fixo') && !(await page.isVisible('#c-phon-field')));
+  await page.click('#c-cancel');
+
   // honorários iniciais: só no Financeiro, vinculados ao processo e parcelados
   await page.click('[data-tab="finance"]'); await page.waitForSelector('tr[data-fin]');
   await page.click('[data-act="new-receita"]'); await page.waitForSelector('#fn-form');
@@ -189,10 +220,10 @@ try {
   await page.waitForSelector('.provbox', { timeout: 5000 });
   const provTxt = (await page.textContent('.provbox')).replace(/\u00a0/g, ' ');
   // 3 parcelas (1 futura + 2 vencidas) + 6 créditos comprados não recebidos (1 atrasado) + 1 processo em andamento (R$ 8.000 previstos)
-  check('caixa de provisionados soma parcelas, créditos e a previsão do processo', /10 itens/.test(provTxt) && /8\.000,00 em 1 processo/.test(provTxt) && /Em atraso/.test(provTxt));
+  check('caixa de provisionados soma parcelas, créditos e a previsão dos processos', /11 itens/.test(provTxt) && /28 mil em 2 processos/.test(provTxt) && /Em atraso/.test(provTxt));
   await page.click('[data-act="open-prov"]');
   await page.waitForSelector('.prov-list', { timeout: 5000 });
-  check('lista separa os itens com baixa direta e os processos (estimativa, sem check)', (await page.$$('.prov-row')).length === 10 && (await page.$$('.prov-row.late')).length === 3 && (await page.$$('.prov-row:has-text("Honorários iniciais")')).length === 3 && (await page.$$('.prov-row:has-text("Créditos comprados")')).length === 6 && (await page.$$('.prov-row.proc')).length === 1 && !(await page.$('.prov-row.proc input')));
+  check('lista separa os itens com baixa direta e os processos (estimativa, sem check)', (await page.$$('.prov-row')).length === 11 && (await page.$$('.prov-row.late')).length === 3 && (await page.$$('.prov-row:has-text("Honorários iniciais")')).length === 3 && (await page.$$('.prov-row:has-text("Créditos comprados")')).length === 6 && (await page.$$('.prov-row.proc')).length === 2 && !(await page.$('.prov-row.proc input')));
   await page.click('#pv-all'); await page.waitForTimeout(100);
   check('"marcar todos os vencidos" seleciona os 3 em atraso', (await page.$$('input[data-pv]:checked')).length === 3 && (await page.textContent('#pv-ok')).includes('(3)'));
   // desmarca o crédito e dá baixa só nas duas parcelas vencidas
@@ -200,7 +231,7 @@ try {
   check('botão reflete a seleção (2 parcelas, R$ 2.000)', (await page.textContent('#pv-ok')).replace(/\u00a0/g, ' ').includes('2.000,00') && (await page.textContent('#pv-ok')).includes('(2)'));
   await page.screenshot({ path: path.join(shots, 'e2e-provisionados.png') });
   await page.click('#pv-ok');
-  await page.waitForFunction(() => !document.querySelector('.prov-list') && document.querySelector('.provbox') && /8 itens/.test(document.querySelector('.provbox').textContent), null, { timeout: 8000 });
+  await page.waitForFunction(() => !document.querySelector('.prov-list') && document.querySelector('.provbox') && /9 itens/.test(document.querySelector('.provbox').textContent), null, { timeout: 8000 });
   check('após a baixa restam 1 parcela, os créditos e o processo; o atraso que sobra é só do crédito', (await page.textContent('.provbox')).includes('Em atraso'));
   await page.selectOption('#ff-sit', 'provisionado'); await page.waitForTimeout(200);
   check('filtro "só provisionados" lista só a parcela futura', (await page.$$('tr[data-fin]')).length === 1 && (await page.textContent('tr[data-fin]')).includes('4/4'));
@@ -210,7 +241,7 @@ try {
 
   // julgamento do processo do escritório a partir da caixa: valor da condenação → quanto recebemos
   await page.click('[data-act="open-prov"]'); await page.waitForSelector('.prov-row.proc');
-  await page.click('.prov-row.proc [data-pv-case]');
+  await page.click('.prov-row.proc:has-text("Cliente Direto") [data-pv-case]');
   await page.waitForSelector('#case-form', { timeout: 5000 });
   check('"Informar resultado" abre o processo', (await page.inputValue('#c-cliente')) === 'Cliente Direto');
   await page.check('#c-fase-julg'); await page.waitForTimeout(100);
@@ -224,7 +255,7 @@ try {
   await page.click('#c-save');
   await page.waitForFunction(() => !document.querySelector('#case-form') && [...document.querySelectorAll('tr[data-fin]')].some(tr => tr.textContent.includes('Cliente Direto') && tr.textContent.includes('Alvará')), null, { timeout: 8000 });
   check('recebimento do processo do escritório entra no Financeiro como alvará de R$ 9.500', (await page.textContent('tr[data-fin]:has-text("Alvará"):has-text("Cliente Direto")')).replace(/\u00a0/g, ' ').includes('9.500,00'));
-  check('processo sai da caixa de provisionados', /7 itens/.test(await page.textContent('.provbox')) && !/em 1 processo/.test(await page.textContent('.provbox')));
+  check('processo recebido sai da caixa de provisionados (fica só o da defesa do executado)', /8 itens/.test(await page.textContent('.provbox')) && /20 mil em 1 processo/.test((await page.textContent('.provbox')).replace(/\u00a0/g, ' ')));
 
   // contratos com empresas
   await page.click('[data-tab="contracts"]');

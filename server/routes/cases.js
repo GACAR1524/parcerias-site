@@ -79,11 +79,11 @@ router.post('/', (req, res, next) => {
     const now = nowISO(), id = uuid();
     db.transaction(() => {
       const fin = settleFinance({ cur: null, c, id, req });
-      db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, natureza, fase, resultado, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
+      db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, natureza, fase, resultado, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
         recebido, valor_recebido, data_recebimento, data_encerramento, fluxo_recebimento, financeiro_status, financeiro_em,
         tem_corretor, nome_corretor, valor_corretor, corretor_pago, observacoes, criado_por, atualizado_por, criado_em, atualizado_em)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
           c.recebido ? 1 : 0, c.valorRecebido, c.dataRecebimento, c.dataEncerramento, c.fluxoRecebimento, fin.status, fin.em,
           c.temCorretor ? 1 : 0, c.nomeCorretor, c.valorCorretor, c.corretorPago ? 1 : 0, c.observacoes, req.user.id, req.user.id, now, now);
     })();
@@ -101,10 +101,10 @@ router.put('/:id', (req, res, next) => {
     if (c.titularidade === 'parceria' && !partnerById.get(c.parceiroId)) return res.status(400).json({ error: 'Parceiro inválido.' });
     db.transaction(() => {
       const fin = settleFinance({ cur, c, id: cur.id, req });
-      db.prepare(`UPDATE cases SET partner_id=?, titularidade=?, valor_acao=?, valor_condenacao=?, pct_honorarios=?, natureza=?, fase=?, resultado=?, numero_processo=?, cliente=?, tipo_acao=?, data_protocolo=?, honorarios_pretendidos=?, custo_lead=?, pct_parceiro=?, pct_nosso=?,
+      db.prepare(`UPDATE cases SET partner_id=?, titularidade=?, valor_acao=?, valor_condenacao=?, pct_honorarios=?, base_honorarios=?, valor_debito=?, valor_devido=?, valor_reconhecido=?, honorarios_iniciais=?, natureza=?, fase=?, resultado=?, numero_processo=?, cliente=?, tipo_acao=?, data_protocolo=?, honorarios_pretendidos=?, custo_lead=?, pct_parceiro=?, pct_nosso=?,
         recebido=?, valor_recebido=?, data_recebimento=?, data_encerramento=?, fluxo_recebimento=?, financeiro_status=?, financeiro_em=?,
         tem_corretor=?, nome_corretor=?, valor_corretor=?, corretor_pago=?, observacoes=?, atualizado_por=?, atualizado_em=? WHERE id=?`)
-        .run(c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
+        .run(c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
           c.recebido ? 1 : 0, c.valorRecebido, c.dataRecebimento, c.dataEncerramento, c.fluxoRecebimento, fin.status, fin.em,
           c.temCorretor ? 1 : 0, c.nomeCorretor, c.valorCorretor, c.corretorPago ? 1 : 0, c.observacoes, req.user.id, nowISO(), cur.id);
     })();
