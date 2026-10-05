@@ -1,12 +1,15 @@
-# Gestão de Parcerias — Costa de Araújo
+# Gestão geral — Costa de Araújo
 
 Sistema web para o escritório controlar os quatro braços do negócio em um só lugar:
 
 - **Processos** — em parceria com advogados parceiros (divisão por %), com advogados
   associados (salário fixo + bonificação por processo) ou somente do escritório (valor pretendido
   da ação × nossa % de honorários finais), com honorários iniciais pagos, custo de leads,
-  corretores, fase (em curso → julgado, com valor da condenação) e situação (quanto recebemos);
-  na defesa do executado, os honorários finais incidem sobre a redução conseguida no débito;
+  corretores, fase (em curso → julgado, com o valor total da condenação e os **honorários
+  sucumbenciais** dentro dele — só dos advogados, divididos meio a meio na parceria e 100 % do
+  escritório nos processos próprios; os contratuais incidem sobre a condenação líquida) e situação
+  (ao marcar recebido, o sistema pergunta a condenação total, os sucumbenciais e quanto recebemos
+  de cada um); na defesa do executado, os honorários finais incidem sobre a redução conseguida no débito;
 - **Compra de créditos** judiciais, com possível data de recebimento e linha do tempo;
 - **Contratos com empresas** (prestação de serviços com valor mensal);
 - **Financeiro** mensal (receitas × despesas, lucro/prejuízo), que recebe automaticamente os

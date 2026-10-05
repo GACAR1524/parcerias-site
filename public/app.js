@@ -46,18 +46,25 @@ const resultadoOf = c => c.resultado || (c.recebido ? 'recebido' : 'em_andamento
 const baseOf = c => c.baseHonorarios || (isOffice(c) ? 'valor_causa' : 'fixo');
 const isExec = c => baseOf(c) === 'reducao_debito';
 const BASE_NOMES = { valor_causa: 'sobre o valor da causa', reducao_debito: 'sobre a redução do débito', fixo: 'valor combinado' };
-const honLabel = c => { const j = faseOf(c) === 'julgado', b = baseOf(c); return b === 'fixo' ? (j ? 'Honorários da condenação (valor fixado)' : 'Honorários finais combinados') : b === 'reducao_debito' ? (j ? 'Honorários sobre a redução obtida' : 'Honorários previstos (sobre a redução)') : (j ? 'Honorários da condenação' : 'Honorários finais previstos'); };
+/* "Concluído": já há condenação definida — processo julgado OU com honorários recebidos (ao receber, perguntamos a condenação total e os sucumbenciais). */
+const concl = c => faseOf(c) === 'julgado' || resultadoOf(c) === 'recebido';
+const honLabel = c => { const j = concl(c), b = baseOf(c); return b === 'fixo' ? (j ? 'Honorários contratuais (valor combinado)' : 'Honorários finais combinados') : b === 'reducao_debito' ? (j ? 'Honorários sobre a redução obtida' : 'Honorários previstos (sobre a redução)') : (j ? 'Honorários contratuais da condenação' : 'Honorários finais previstos'); };
 const has = v => v != null && v !== '';
-/* Redução do débito: cobrado − devido (em curso) ou cobrado − reconhecido na decisão (julgado). */
-const reducao = c => { const j = faseOf(c) === 'julgado'; const alvo = j && has(c.valorReconhecido) ? num(c.valorReconhecido) : (has(c.valorDevido) ? num(c.valorDevido) : null); return alvo == null || !has(c.valorDebito) ? null : Math.max(0, num(c.valorDebito) - alvo); };
-const honBase = c => { const b = baseOf(c); if (b === 'reducao_debito') return reducao(c) ?? 0; if (b === 'valor_causa') return faseOf(c) === 'julgado' && has(c.valorCondenacao) ? num(c.valorCondenacao) : num(c.valorAcao); return 0; };
+/* Honorários sucumbenciais: fixados na decisão, só dos advogados; estão DENTRO do valor total da condenação. */
+const sucumbOf = c => concl(c) ? num(c.honorariosSucumbenciais) : 0;
+const condLiquida = c => has(c.valorCondenacao) ? Math.max(0, num(c.valorCondenacao) - sucumbOf(c)) : null;
+/* % dos sucumbenciais que cabe ao parceiro: padrão meio a meio na parceria, a bonificação no associado, nada quando só do escritório. */
+const pctSucumbOf = c => isOffice(c) ? 0 : (c.pctSucumbParceiro != null && c.pctSucumbParceiro !== '' ? num(c.pctSucumbParceiro) : (isAssoc(partnerById(c.parceiroId)) ? num(c.pctParceiro) : 50));
+/* Redução do débito: cobrado − devido (em curso) ou cobrado − reconhecido na decisão (concluído). */
+const reducao = c => { const j = concl(c); const alvo = j && has(c.valorReconhecido) ? num(c.valorReconhecido) : (has(c.valorDevido) ? num(c.valorDevido) : null); return alvo == null || !has(c.valorDebito) ? null : Math.max(0, num(c.valorDebito) - alvo); };
+const honBase = c => { const b = baseOf(c); if (b === 'reducao_debito') return reducao(c) ?? 0; if (b === 'valor_causa') return concl(c) && has(c.valorCondenacao) ? condLiquida(c) : num(c.valorAcao); return 0; };
 const honCalc = c => round2(honBase(c) * num(c.pctHonorarios) / 100);
 /* Honorários iniciais do processo já lançados no Financeiro (receitas vinculadas na categoria). */
 const hiLancados = cid => S.finance.filter(e => e.caseId === cid && e.tipo === 'receita' && e.categoria === 'Honorários iniciais');
-const baseDesc = c => { const j = faseOf(c) === 'julgado', b = baseOf(c), pc = c.pctHonorarios != null ? num(c.pctHonorarios) + '% ' : '';
-  if (b === 'reducao_debito') { const r = reducao(c); return `${pc}sobre a redução${r != null ? ' de ' + brlShort(r) : ''}${j ? ' obtida' : ' pretendida'}`; }
-  if (b === 'valor_causa') return j ? `${pc}da condenação${has(c.valorCondenacao) ? ' de ' + brlShort(c.valorCondenacao) : ''}` : `${pc}do valor da causa${has(c.valorAcao) ? ' de ' + brlShort(c.valorAcao) : ''}`;
-  return j ? 'hon. da condenação (valor combinado)' : 'hon. combinados'; };
+const baseDesc = c => { const j = concl(c), b = baseOf(c), pc = c.pctHonorarios != null ? num(c.pctHonorarios) + '% ' : '', suc = sucumbOf(c) > 0 ? ` + ${brlShort(sucumbOf(c))} sucumb.` : '';
+  if (b === 'reducao_debito') { const r = reducao(c); return `${pc}sobre a redução${r != null ? ' de ' + brlShort(r) : ''}${j ? ' obtida' : ' pretendida'}${suc}`; }
+  if (b === 'valor_causa') return j ? `${pc}da condenação${has(c.valorCondenacao) ? ' líquida de ' + brlShort(condLiquida(c)) : ''}${suc}` : `${pc}do valor da causa${has(c.valorAcao) ? ' de ' + brlShort(c.valorAcao) : ''}`;
+  return (j ? 'hon. contratuais (valor combinado)' : 'hon. combinados') + suc; };
 const numFmt = c => natOf(c) === 'judicial' ? cnj(c.numeroProcesso) : String(c.numeroProcesso || '');
 const round2 = v => Math.round(num(v) * 100) / 100;
 const natTag = c => (natOf(c) === 'administrativo' ? '<span class="tag adm">ADM</span>' : '<span class="tag jud">JUD</span>') + (isOffice(c) ? '<span class="tag esc" title="Processo só do escritório">ESCRITÓRIO</span>' : '') + (isExec(c) ? '<span class="tag exe" title="Defesa do executado — honorários sobre a redução do débito">EXECUTADO</span>' : '');
@@ -204,17 +211,28 @@ function enterApp() {
 }
 
 /* ============ cálculos ============ */
+/*
+ * Números de um processo. Honorários "pretendidos" = contratuais (honorariosPretendidos) + sucumbenciais (quando já há condenação).
+ * Divisão: os contratuais seguem a % do processo (pctParceiro/pctNosso); os sucumbenciais seguem pctSucumbParceiro
+ * (meio a meio na parceria por padrão; 100% do escritório quando o processo é só nosso). O servidor aplica a mesma regra.
+ */
 function metrics(c) {
   const res = resultadoOf(c), isRec = res === 'recebido', perdido = res === 'perdido';
-  const pretendido = num(c.honorariosPretendidos);
+  const contratual = num(c.honorariosPretendidos), sucumb = sucumbOf(c);
+  const pretendido = contratual + sucumb;
   const recebido = isRec ? num(c.valorRecebido == null || c.valorRecebido === '' ? pretendido : c.valorRecebido) : 0;
-  const base = isRec ? recebido : (perdido ? 0 : pretendido);
-  const pN = num(c.pctNosso), pP = num(c.pctParceiro);
+  const sucRec = isRec ? Math.min(recebido, has(c.sucumbRecebido) ? num(c.sucumbRecebido) : Math.min(sucumb, recebido)) : 0;
+  const contrRec = recebido - sucRec;
+  const pP = num(c.pctParceiro), pS = pctSucumbOf(c);
   const corretor = c.temCorretor ? num(c.valorCorretor) : 0;
+  const base = isRec ? recebido : (perdido ? 0 : pretendido);
+  const parteParceiro = isRec ? contrRec * pP / 100 + sucRec * pS / 100 : (perdido ? 0 : contratual * pP / 100 + sucumb * pS / 100);
+  const parceiroRecebido = isRec ? parteParceiro : 0;
   return {
-    pretendido, recebido, base, perdido, aReceber: (!isRec && !perdido) ? pretendido : 0,
-    nossaParte: base * pN / 100, parteParceiro: base * pP / 100,
-    nossaRecebida: recebido * pN / 100, parceiroRecebido: recebido * pP / 100,
+    pretendido, contratual, sucumb, recebido, sucRec, contrRec, base, perdido, aReceber: (!isRec && !perdido) ? pretendido : 0,
+    nossaParte: base - parteParceiro, parteParceiro,
+    nossaRecebida: recebido - parceiroRecebido, parceiroRecebido,
+    sucumbParceiro: isRec ? sucRec * pS / 100 : (perdido ? 0 : sucumb * pS / 100),
     custoLead: num(c.custoLead), corretor, corretorPendente: c.temCorretor && !c.corretorPago ? corretor : 0
   };
 }
@@ -234,14 +252,16 @@ function totals(list) {
 /* Lançamentos que um recebimento gera no financeiro (o servidor aplica a mesma regra). */
 function financeEntriesFor(c) {
   const m = metrics(c), pObj = partnerById(c.parceiroId), p = partnerName(c.parceiroId), assoc = isAssoc(pObj), ref = `Processo ${numFmt(c)} — ${c.cliente}`;
-  if (isOffice(c)) return m.recebido > 0 ? [{ tipo: 'receita', categoria: faseOf(c) === 'julgado' ? 'Alvará de honorários finais' : 'Honorários de êxito', descricao: `${ref} (escritório)`, valor: round2(m.recebido), data: c.dataRecebimento }] : [];
+  const composicao = m.sucRec > 0 ? `Honorários contratuais ${brl(m.contrRec)} + honorários sucumbenciais ${brl(m.sucRec)}.` : '';
+  if (isOffice(c)) return m.recebido > 0 ? [{ tipo: 'receita', categoria: faseOf(c) === 'julgado' ? 'Alvará de honorários finais' : 'Honorários de êxito', descricao: `${ref} (escritório)`, valor: round2(m.recebido), data: c.dataRecebimento, observacoes: composicao }] : [];
+  const divisao = m.sucRec > 0 ? `${num(c.pctParceiro)}% de ${brl(m.contrRec)} (contratuais) + ${pctSucumbOf(c)}% de ${brl(m.sucRec)} (sucumbenciais).` : '';
   const categoria = faseOf(c) === 'julgado' ? 'Alvará de honorários finais' : (assoc ? 'Honorários de êxito' : 'Honorários de parceria');
   const out = [];
-  if (!assoc && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${p})`, valor: round2(m.nossaRecebida), data: c.dataRecebimento });
+  if (!assoc && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${p})`, valor: round2(m.nossaRecebida), data: c.dataRecebimento, observacoes: m.sucRec > 0 ? `Total recebido ${brl(m.recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '' });
   else {
-    out.push({ tipo: 'receita', categoria, descricao: `${ref} (valor total recebido)`, valor: round2(m.recebido), data: c.dataRecebimento });
-    if (assoc) out.push({ tipo: 'despesa', categoria: 'Bonificação de associado', descricao: `Bonificação de ${p} — ${ref}`, valor: round2(m.parceiroRecebido), data: c.dataRecebimento, associadoId: pObj.id });
-    else out.push({ tipo: 'despesa', categoria: 'Repasse a parceiro', descricao: `Repasse a ${p} — ${ref}`, valor: round2(m.parceiroRecebido), data: c.dataRecebimento });
+    out.push({ tipo: 'receita', categoria, descricao: `${ref} (valor total recebido)`, valor: round2(m.recebido), data: c.dataRecebimento, observacoes: composicao });
+    if (assoc) out.push({ tipo: 'despesa', categoria: 'Bonificação de associado', descricao: `Bonificação de ${p} — ${ref}`, valor: round2(m.parceiroRecebido), data: c.dataRecebimento, associadoId: pObj.id, observacoes: divisao });
+    else out.push({ tipo: 'despesa', categoria: 'Repasse a parceiro', descricao: `Repasse a ${p} — ${ref}`, valor: round2(m.parceiroRecebido), data: c.dataRecebimento, observacoes: divisao });
   }
   return out.filter(e => e.valor > 0);
 }
@@ -500,8 +520,8 @@ function casesTable(list) {
     <td>${natTag(c)} <span class="mono">${esc(numFmt(c))}</span><span class="sub">${esc(c.tipoAcao || '')}</span></td>
     <td>${esc(c.cliente)}${admin ? `<span class="sub">${isOffice(c) ? 'Só do escritório' : esc(partnerName(c.parceiroId))}${num(c.honorariosIniciais) > 0 ? ` · iniciais ${brlShort(c.honorariosIniciais)}${hiLancados(c.id).length ? '' : ' <b style="color:var(--warn)" title="Honorários iniciais ainda não lançados no Financeiro">lançar</b>'}` : ''}</span>` : (num(c.honorariosIniciais) > 0 ? `<span class="sub">iniciais ${brlShort(c.honorariosIniciais)}</span>` : '')}</td>
     <td class="num">${brl(m.pretendido)}<span class="sub">${baseDesc(c)} · lead ${brl(m.custoLead)}</span></td>
-    <td>${statusPill(c)}${resultadoOf(c) === 'recebido' ? `<span class="sub">${brl(m.recebido)} em ${fmtDate(c.dataRecebimento)}${admin ? (c.financeiroStatus === 'lancado' ? ' · no financeiro' : c.financeiroStatus === 'pendente' ? ' · <b style="color:var(--warn)">lançar no financeiro</b>' : '') : ''}</span>` : resultadoOf(c) === 'perdido' ? `<span class="sub">encerrado em ${fmtDate(c.dataEncerramento)}</span>` : `<span class="sub">${faseOf(c) === 'julgado' ? 'julgado, aguardando' : 'em curso'}</span>`}</td>
-    <td class="num">${isOffice(c) ? '100% escritório' : `${num(c.pctParceiro)}% / ${num(c.pctNosso)}%`}<span class="sub">${isOffice(c) ? brlShort(m.nossaParte) : brlShort(m.parteParceiro) + ' / ' + brlShort(m.nossaParte)}</span></td>
+    <td>${statusPill(c)}${resultadoOf(c) === 'recebido' ? `<span class="sub">${brl(m.recebido)}${m.sucRec > 0 ? ` (${brlShort(m.contrRec)} contratuais + ${brlShort(m.sucRec)} sucumb.)` : ''} em ${fmtDate(c.dataRecebimento)}${admin ? (c.financeiroStatus === 'lancado' ? ' · no financeiro' : c.financeiroStatus === 'pendente' ? ' · <b style="color:var(--warn)">lançar no financeiro</b>' : '') : ''}</span>` : resultadoOf(c) === 'perdido' ? `<span class="sub">encerrado em ${fmtDate(c.dataEncerramento)}</span>` : `<span class="sub">${faseOf(c) === 'julgado' ? 'julgado, aguardando' : 'em curso'}</span>`}</td>
+    <td class="num">${isOffice(c) ? '100% escritório' : `${num(c.pctParceiro)}% / ${num(c.pctNosso)}%${m.sucumb > 0 || m.sucRec > 0 ? ` <small title="Divisão dos honorários sucumbenciais">(sucumb. ${num(pctSucumbOf(c))}% / ${Math.round((100 - pctSucumbOf(c)) * 100) / 100}%)</small>` : ''}`}<span class="sub">${isOffice(c) ? brlShort(m.nossaParte) : brlShort(m.parteParceiro) + ' / ' + brlShort(m.nossaParte)}</span></td>
     <td>${c.temCorretor ? (c.corretorPago ? `<span class="pill ok">Pago</span>` : `<span class="pill warn">A pagar</span>`) + `<span class="sub">${brl(c.valorCorretor)}${c.nomeCorretor ? ' · ' + esc(c.nomeCorretor) : ''}</span>` : '<span class="muted">—</span>'}</td>
   </tr>`; }).join('');
   return `<div class="table-wrap"><table><thead><tr><th>Protocolo</th><th>Processo</th><th>Cliente${admin ? ' · parceiro' : ''}</th><th class="num">Valor</th><th>Situação</th><th class="num">Advogado / escritório</th><th>Corretor</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1023,7 +1043,7 @@ function openProvisionedSheet() {
   const items = provisionedItems(), sp = provSplit(items);
   const total = sp.total;
   const procRows = sp.proc.map(x => `<div class="prov-row proc">
-    <span class="pr-main"><b>${esc(x.origem)}</b><small>${esc(x.natureza)} · ${faseOf(x.ref) === 'julgado' ? 'julgado' : 'em curso'}${isOffice(x.ref) ? (x.ref.pctHonorarios != null ? ` · ${num(x.ref.pctHonorarios)}% de ${brl(honBase(x.ref))}` : '') : ` · ${num(x.ref.pctNosso)}% de ${brl(num(x.ref.honorariosPretendidos))}`}</small></span>
+    <span class="pr-main"><b>${esc(x.origem)}</b><small>${esc(x.natureza)} · ${faseOf(x.ref) === 'julgado' ? 'julgado' : 'em curso'}${isOffice(x.ref) ? (x.ref.pctHonorarios != null ? ` · ${num(x.ref.pctHonorarios)}% de ${brl(honBase(x.ref))}` : '') : ` · ${num(x.ref.pctNosso)}% de ${brl(num(x.ref.honorariosPretendidos))}`}${sucumbOf(x.ref) > 0 ? ` + sucumbenciais ${brl(sucumbOf(x.ref) - metrics(x.ref).sucumbParceiro)}` : ''}</small></span>
     <span class="pr-side"><b>${brl(x.valor)}</b><button class="btn btn-sm" type="button" data-pv-case="${esc(x.ref.id)}">${faseOf(x.ref) === 'julgado' ? 'Informar recebimento' : 'Informar resultado'}</button></span></div>`).join('');
   const rows = sp.firm.map(x => `<label class="prov-row ${x.late ? 'late' : ''}" for="pv-${esc(x.id)}">
     <input type="checkbox" id="pv-${esc(x.id)}" data-pv="${esc(x.id)}">
@@ -1035,7 +1055,7 @@ function openProvisionedSheet() {
     ${sp.firm.length ? `<div class="row" style="margin-bottom:8px"><div class="field"><label for="pv-data">Data do recebimento <small>(aplicada aos itens marcados)</small></label><input type="date" id="pv-data" value="${todayISO()}"></div><div class="field" style="justify-content:flex-end"><button class="btn btn-sm" type="button" id="pv-all">Marcar todos os vencidos</button></div></div>
     <div class="prov-list">${rows}</div>` : '<p class="hint">Nenhuma parcela, mensalidade ou crédito comprado pendente.</p>'}
     ${sp.proc.length ? `<div class="card-h" style="margin-top:14px"><h2>Processos em andamento</h2><small>${sp.proc.length} · ${brl(sp.procV)} previstos</small></div>
-    <p class="hint">Previsão da parte do escritório (valor pretendido × nossa %). O valor final pode ser maior ou menor: a baixa é feita no próprio processo — marque <b>Julgado</b>, informe o valor da condenação e, quando o dinheiro entrar, <b>Finalizado e recebido</b> com quanto recebemos.</p>
+    <p class="hint">Previsão da parte do escritório (honorários contratuais × nossa % + nossa parte dos sucumbenciais). O valor final pode ser maior ou menor: a baixa é feita no próprio processo — marque <b>Julgado</b>, informe a condenação total e os sucumbenciais e, quando o dinheiro entrar, <b>Finalizado e recebido</b> com quanto recebemos de cada um.</p>
     <div class="prov-list">${procRows}</div>` : ''}
     <p class="err" id="pv-err"></p>
     <div class="form-actions"><button class="btn" type="button" id="pv-cancel">Fechar</button>${sp.firm.length ? '<button class="btn btn-primary" type="button" id="pv-ok" disabled>Confirmar recebimento</button>' : ''}</div>`
@@ -1388,7 +1408,10 @@ function openCaseForm(c) {
   const pid = admin ? (office0 ? '' : (c?.parceiroId || (S.f.partner !== '_escritorio' ? S.f.partner : '') || '')) : myPartnerId();
   const p = partnerById(pid);
   const d = c || { parceiroId: pid, titularidade: office0 ? 'escritorio' : 'parceria', natureza: 'judicial', fase: 'em_curso', resultado: 'em_andamento', dataProtocolo: todayISO(), pctParceiro: office0 ? 0 : (p ? num(p.pctParceiroPadrao) : 50), pctNosso: office0 ? 100 : (p ? num(p.pctNossoPadrao) : 50), temCorretor: false, corretorPago: false, fluxoRecebimento: 'escritorio' };
-  const res0 = resultadoOf(d), fase0 = faseOf(d), nat0 = natOf(d), base0 = c ? baseOf(c) : (office0 ? 'valor_causa' : 'fixo');
+  const res0 = resultadoOf(d), fase0 = faseOf(d), nat0 = natOf(d), base0 = c ? baseOf(c) : (office0 ? 'valor_causa' : 'fixo'), concl0 = fase0 === 'julgado' || res0 === 'recebido';
+  const psp0 = c ? pctSucumbOf(c) : (office0 ? 0 : (isAssoc(p) ? num(d.pctParceiro) : 50));
+  const sucRec0 = c && res0 === 'recebido' ? (has(c.sucumbRecebido) ? num(c.sucumbRecebido) : Math.min(num(c.honorariosSucumbenciais), num(c.valorRecebido))) : 0;
+  const contrRec0 = c && res0 === 'recebido' ? Math.max(0, num(c.valorRecebido == null ? num(c.honorariosPretendidos) + num(c.honorariosSucumbenciais) : c.valorRecebido) - sucRec0) : 0;
   const finStatus = c?.financeiroStatus || 'nao';
   const ps = S.partners.filter(x => !isIntern(x) && (x.ativo !== false || x.id === pid)).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   openSheet(isNew ? 'Novo processo' : 'Editar processo', `
@@ -1404,7 +1427,7 @@ function openCaseForm(c) {
       </div>
       <div class="row" style="margin-bottom:12px">
         <label class="check" for="c-fase-curso" style="margin:0"><input type="radio" name="c-fase" id="c-fase-curso" value="em_curso" ${fase0 === 'em_curso' ? 'checked' : ''}><span>Em curso<small>ainda sem julgamento — informe o valor pretendido</small></span></label>
-        <label class="check" for="c-fase-julg" style="margin:0"><input type="radio" name="c-fase" id="c-fase-julg" value="julgado" ${fase0 === 'julgado' ? 'checked' : ''}><span>Julgado<small>já há decisão — informe o valor da condenação</small></span></label>
+        <label class="check" for="c-fase-julg" style="margin:0"><input type="radio" name="c-fase" id="c-fase-julg" value="julgado" ${fase0 === 'julgado' ? 'checked' : ''}><span>Julgado<small>já há decisão — informe a condenação total e os sucumbenciais</small></span></label>
       </div>
       <div class="row">
         <div class="field"><label for="c-num" id="c-num-label">${nat0 === 'judicial' ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo'}</label><input type="text" id="c-num" inputmode="${nat0 === 'judicial' ? 'numeric' : 'text'}" placeholder="${nat0 === 'judicial' ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'}" value="${esc(c?.numeroProcesso || '')}" required></div>
@@ -1427,16 +1450,23 @@ function openCaseForm(c) {
         </div>
         <div class="row" id="c-causa-fields" ${base0 === 'valor_causa' ? '' : 'hidden'}>
           <div class="field"><label for="c-vacao">Valor pretendido da ação <small>(R$)</small></label><input type="text" class="money" id="c-vacao" inputmode="decimal" value="${c?.valorAcao != null ? moneyInput(c.valorAcao) : ''}" placeholder="0,00"></div>
-          <div class="field" id="c-vcond-field" ${fase0 === 'julgado' ? '' : 'hidden'}><label for="c-vcond">Valor da condenação <small>(R$)</small></label><input type="text" class="money" id="c-vcond" inputmode="decimal" value="${c?.valorCondenacao != null ? moneyInput(c.valorCondenacao) : ''}" placeholder="0,00"></div>
         </div>
         <div id="c-red-fields" ${base0 === 'reducao_debito' ? '' : 'hidden'}>
           <div class="row">
             <div class="field"><label for="c-vdeb">Valor cobrado na execução <small>(R$)</small></label><input type="text" class="money" id="c-vdeb" inputmode="decimal" value="${c?.valorDebito != null ? moneyInput(c.valorDebito) : ''}" placeholder="ex.: 200.000,00"></div>
             <div class="field"><label for="c-vdev">Valor que entendemos devido <small>(R$)</small></label><input type="text" class="money" id="c-vdev" inputmode="decimal" value="${c?.valorDevido != null ? moneyInput(c.valorDevido) : ''}" placeholder="ex.: 120.000,00"></div>
-            <div class="field" id="c-vrecon-field" ${fase0 === 'julgado' ? '' : 'hidden'}><label for="c-vrecon">Valor reconhecido na decisão <small>(R$)</small></label><input type="text" class="money" id="c-vrecon" inputmode="decimal" value="${c?.valorReconhecido != null ? moneyInput(c.valorReconhecido) : ''}" placeholder="0,00"></div>
           </div>
           <p class="hint" id="c-red-hint" style="margin:-4px 0 10px"></p>
         </div>
+        <div id="c-cond-home"><div id="c-cond-block" ${concl0 ? '' : 'hidden'}>
+          <div class="subhead" id="c-cond-head">Decisão — condenação e honorários sucumbenciais</div>
+          <div class="row">
+            <div class="field" id="c-vcond-field" ${base0 === 'reducao_debito' ? 'hidden' : ''}><label for="c-vcond">Valor total da condenação <small>(R$, já com os sucumbenciais)</small></label><input type="text" class="money" id="c-vcond" inputmode="decimal" value="${c?.valorCondenacao != null ? moneyInput(c.valorCondenacao) : ''}" placeholder="0,00"></div>
+            <div class="field" id="c-vrecon-field" ${base0 === 'reducao_debito' ? '' : 'hidden'}><label for="c-vrecon">Valor reconhecido na decisão <small>(R$)</small></label><input type="text" class="money" id="c-vrecon" inputmode="decimal" value="${c?.valorReconhecido != null ? moneyInput(c.valorReconhecido) : ''}" placeholder="0,00"></div>
+            <div class="field"><label for="c-vsuc">Honorários sucumbenciais <small>(R$, dentro da condenação)</small></label><input type="text" class="money" id="c-vsuc" inputmode="decimal" value="${c && concl0 && num(c.honorariosSucumbenciais) > 0 ? moneyInput(c.honorariosSucumbenciais) : ''}" placeholder="0,00"></div>
+          </div>
+          <p class="hint" id="c-cond-hint" style="margin:-4px 0 10px"></p>
+        </div></div>
         <div class="row">
           <div class="field" id="c-phon-field" ${base0 === 'fixo' ? 'hidden' : ''}><label for="c-phon">% de honorários finais</label><input type="number" id="c-phon" min="0" max="100" step="0.5" value="${c?.pctHonorarios != null ? num(c.pctHonorarios) : (base0 === 'reducao_debito' ? 25 : 20)}"></div>
           <div class="field"><label for="c-hon" id="c-hon-label">${honLabel(d)} <small>(R$)</small></label><input type="text" class="money" id="c-hon" inputmode="decimal" value="${c ? moneyInput(c.honorariosPretendidos) : ''}" placeholder="0,00"><p class="hint" id="c-hon-hint" style="margin:4px 0 0"></p></div>
@@ -1448,6 +1478,12 @@ function openCaseForm(c) {
           <div class="field"><label for="c-pn">Costa de Araújo <small>(%)</small></label><input type="number" id="c-pn" min="0" max="100" step="0.5" value="${num(d.pctNosso)}" required></div>
         </div>
         <p class="hint" id="c-split-hint">${isAssoc(p) ? `Padrão do associado: ${num(p.pctBonificacaoPadrao)}% sobre os honorários recebidos. Altere apenas se este processo tiver acordo diferente.` : 'Os dois percentuais somam 100%. Ao alterar um, o outro é ajustado.'}</p>
+        <div class="subhead" style="margin-top:4px">Honorários sucumbenciais <small>(só dos advogados — divisão própria)</small></div>
+        <div class="row">
+          <div class="field"><label for="c-psp" id="c-psp-label">${isAssoc(p) ? 'Associado' : 'Parceiro'} <small>(%)</small></label><input type="number" id="c-psp" min="0" max="100" step="0.5" value="${psp0}"></div>
+          <div class="field"><label for="c-psn">Costa de Araújo <small>(%)</small></label><input type="number" id="c-psn" min="0" max="100" step="0.5" value="${Math.round((100 - psp0) * 100) / 100}"></div>
+        </div>
+        <p class="hint" id="c-psuc-hint">${isAssoc(p) ? 'Por padrão a bonificação do associado também incide sobre os sucumbenciais; ajuste se o acordo for outro.' : 'Na parceria, os sucumbenciais são divididos meio a meio por padrão. Quando o processo é só do escritório, ficam 100% conosco.'}</p>
       </fieldset>
       <fieldset><legend>Situação do processo</legend>
         <div class="row" style="margin-bottom:12px">
@@ -1456,10 +1492,14 @@ function openCaseForm(c) {
           <label class="check" for="c-res-per" style="margin:0"><input type="radio" name="c-res" id="c-res-per" value="perdido" ${res0 === 'perdido' ? 'checked' : ''}><span>Perdido<small>nada a receber</small></span></label>
         </div>
         <div id="rec-fields" ${res0 === 'recebido' ? '' : 'hidden'}>
+          <div id="c-rec-cond"></div>
+          <div class="subhead">Quanto recebemos</div>
           <div class="row">
-            <div class="field"><label for="c-vrec">Quanto recebemos de honorários <small>(R$)</small></label><input type="text" class="money" id="c-vrec" inputmode="decimal" value="${c && res0 === 'recebido' ? moneyInput(c.valorRecebido == null ? c.honorariosPretendidos : c.valorRecebido) : ''}" placeholder="0,00"></div>
+            <div class="field"><label for="c-vrecc" id="c-vrecc-label">Honorários contratuais recebidos <small>(R$)</small></label><input type="text" class="money" id="c-vrecc" inputmode="decimal" value="${c && res0 === 'recebido' ? moneyInput(contrRec0) : ''}" placeholder="0,00"></div>
+            <div class="field"><label for="c-vrecs">Honorários sucumbenciais recebidos <small>(R$)</small></label><input type="text" class="money" id="c-vrecs" inputmode="decimal" value="${c && res0 === 'recebido' && sucRec0 > 0 ? moneyInput(sucRec0) : ''}" placeholder="0,00"></div>
             <div class="field"><label for="c-drec">Data do recebimento</label><input type="date" id="c-drec" value="${esc((c?.dataRecebimento || '').slice(0, 10))}"></div>
           </div>
+          <p class="hint" id="c-rec-hint" style="margin:-4px 0 10px"></p>
           <div class="field" id="c-fluxo-field" ${isAssoc(p) || office0 ? 'hidden' : ''}><label for="c-fluxo">Quem recebeu o dinheiro</label><select id="c-fluxo"><option value="escritorio" ${(d.fluxoRecebimento || 'escritorio') === 'escritorio' ? 'selected' : ''}>O escritório recebeu o valor total e repassa a parte do parceiro</option><option value="parceiro" ${d.fluxoRecebimento === 'parceiro' ? 'selected' : ''}>O parceiro recebeu e repassou a parte do escritório</option></select></div>
           <div id="fin-box"></div>
         </div>
@@ -1498,25 +1538,56 @@ function openCaseForm(c) {
      se o usuário digitar outro valor em "honorários", o cálculo deixa de sobrescrever (até ele apagar o campo). */
   const curBase = () => f.querySelector('input[name="c-base"]:checked').value;
   const mon = id => g(id).value.trim() ? parseMoney(g(id).value) : null;
-  const honInputs = () => ({ baseHonorarios: curBase(), fase: curFase(), valorAcao: mon('c-vacao'), valorCondenacao: mon('c-vcond'), valorDebito: mon('c-vdeb'), valorDevido: mon('c-vdev'), valorReconhecido: mon('c-vrecon'), pctHonorarios: num(g('c-phon').value) });
+  const curPsp = () => curTit() === 'escritorio' ? 0 : num(g('c-psp').value);
+  const honInputs = () => ({ baseHonorarios: curBase(), fase: curFase(), resultado: curRes(), titularidade: curTit(), parceiroId: curTit() === 'escritorio' ? null : (admin ? g('c-partner').value : myPartnerId()), valorAcao: mon('c-vacao'), valorCondenacao: mon('c-vcond'), valorDebito: mon('c-vdeb'), valorDevido: mon('c-vdev'), valorReconhecido: mon('c-vrecon'), honorariosSucumbenciais: parseMoney(g('c-vsuc').value), pctSucumbParceiro: curPsp(), pctHonorarios: num(g('c-phon').value) });
   f.dataset.honManual = c && baseOf(c) !== 'fixo' && c.honorariosPretendidos != null && Math.abs(num(c.honorariosPretendidos) - honCalc(c)) > 0.005 ? '1' : '';
+  /* O bloco "condenação + sucumbenciais" fica em Honorários quando o processo é julgado; ao marcar "recebido" ele desce
+     para a seção de recebimento, para a pergunta ser feita naquele momento (é o mesmo bloco, só muda de lugar). */
+  const placeCond = () => {
+    const blk = g('c-cond-block'), rec = curRes() === 'recebido', target = rec ? g('c-rec-cond') : g('c-cond-home');
+    if (blk.parentNode !== target) target.appendChild(blk);
+    blk.hidden = !(rec || curFase() === 'julgado');
+    g('c-cond-head').textContent = rec ? 'Antes: qual foi a condenação e quanto dela é honorário sucumbencial?' : 'Decisão — condenação e honorários sucumbenciais';
+  };
+  /* Valores recebidos acompanham o cálculo (contratuais = honorários; sucumbenciais = os fixados) até o usuário digitar neles. */
+  const syncRec = () => {
+    if (curRes() !== 'recebido') return;
+    if (!g('c-vrecc').dataset.touched) g('c-vrecc').value = g('c-hon').value;
+    if (!g('c-vrecs').dataset.touched) g('c-vrecs').value = g('c-vsuc').value.trim() ? moneyInput(parseMoney(g('c-vsuc').value)) : '';
+    const cc = parseMoney(g('c-vrecc').value), sc = parseMoney(g('c-vrecs').value), tot = cc + sc, pS = curPsp(), off = curTit() === 'escritorio';
+    g('c-rec-hint').innerHTML = tot > 0 ? `Total recebido: <b>${brl(tot)}</b>${sc > 0 ? ` — ${brl(cc)} contratuais + ${brl(sc)} sucumbenciais${off ? ' (sucumbenciais 100% do escritório)' : ` (sucumbenciais: ${num(pS)}% ${isAssoc(partnerById(g('c-partner')?.value)) ? 'do associado' : 'do parceiro'} = ${brl(sc * pS / 100)}, ${brl(sc * (100 - pS) / 100)} do escritório)`}` : ''}.` : 'Informe quanto entrou de honorários contratuais e, se houve, de sucumbenciais.';
+  };
   const refreshHon = () => {
-    const julg = curFase() === 'julgado', b = curBase(), d = honInputs();
+    const d = honInputs(), julg = concl(d), b = curBase(), off = curTit() === 'escritorio';
     g('c-causa-fields').hidden = b !== 'valor_causa'; g('c-red-fields').hidden = b !== 'reducao_debito'; g('c-phon-field').hidden = b === 'fixo';
-    g('c-vcond-field').hidden = !julg; g('c-vrecon-field').hidden = !julg;
+    g('c-vcond-field').hidden = b === 'reducao_debito'; g('c-vrecon-field').hidden = b !== 'reducao_debito';
+    placeCond();
     g('c-hon-label').innerHTML = `${honLabel(d)} <small>(R$)</small>`;
-    const hint = g('c-hon-hint');
+    const hint = g('c-hon-hint'), suc = num(d.honorariosSucumbenciais), pS = curPsp();
+    if (julg) {
+      const liq = condLiquida(d), partes = suc > 0 ? (off ? ' Os sucumbenciais ficam 100% com o escritório.' : ` Sucumbenciais: ${num(pS)}% ${isAssoc(partnerById(d.parceiroId)) ? 'do associado' : 'do parceiro'} (${brl(suc * pS / 100)}) e ${brl(suc * (100 - pS) / 100)} do escritório.`) : '';
+      const excede = has(d.valorCondenacao) && suc > num(d.valorCondenacao);
+      g('c-cond-hint').innerHTML = excede ? '<span class="bad">Os honorários sucumbenciais não podem ser maiores que o valor total da condenação.</span>'
+        : b === 'reducao_debito' ? ((suc > 0 ? `Sucumbenciais fixados a nosso favor: <b>${brl(suc)}</b> (não entram na redução do débito).` : 'Se a decisão fixou honorários sucumbenciais a nosso favor, informe o valor; eles não entram na base contratual.') + partes)
+        : (liq != null ? `Condenação líquida (sem os sucumbenciais): <b>${brl(liq)}</b> = ${brl(d.valorCondenacao)} − ${brl(suc)}.${b === 'valor_causa' ? ' É sobre ela que incidem os honorários contratuais.' : ''}${partes}` : 'Informe o valor total da condenação (o número da decisão, que inclui os sucumbenciais) e, separado, quanto dele é honorário sucumbencial.');
+    }
     if (b === 'reducao_debito') {
       const r = reducao(d);
       g('c-red-hint').innerHTML = r != null ? `Redução ${julg && has(d.valorReconhecido) ? 'obtida' : 'pretendida'}: <b>${brl(r)}</b> (${brl(d.valorDebito)} cobrados − ${brl(julg && has(d.valorReconhecido) ? d.valorReconhecido : d.valorDevido)}).` : 'Informe o valor cobrado na execução e o valor que entendemos devido; os honorários incidem só sobre a diferença.';
     }
-    if (b === 'fixo') { hint.textContent = julg ? 'Honorários fixados na decisão; a divisão com o parceiro ou associado incide sobre o que for recebido.' : 'Informe o valor combinado com o cliente para o êxito.'; return; }
+    if (b === 'fixo') { hint.textContent = julg ? 'Honorários contratuais combinados com o cliente; os sucumbenciais entram à parte, com divisão própria.' : 'Informe o valor combinado com o cliente para o êxito.'; syncRec(); return; }
     const base = honBase(d), calc = round2(base * num(d.pctHonorarios) / 100);
     if (!f.dataset.honManual && base > 0) g('c-hon').value = moneyInput(calc);
-    const falta = b === 'reducao_debito' ? (julg ? 'Informe o valor cobrado e o reconhecido na decisão para calcular os honorários.' : 'Informe o valor cobrado e o valor devido para calcular os honorários previstos.') : (julg ? 'Informe o valor da condenação para calcular os honorários.' : 'Informe o valor pretendido da ação para calcular os honorários previstos.');
-    hint.textContent = base > 0 ? `${f.dataset.honManual ? 'Valor informado à mão' : 'Calculado'}: ${num(d.pctHonorarios)}% de ${brl(base)}${b === 'reducao_debito' ? ' de redução' : ''}${f.dataset.honManual ? ` seria ${brl(calc)} — apague o campo para voltar ao cálculo` : ''}.` : falta;
+    const falta = b === 'reducao_debito' ? (julg ? 'Informe o valor cobrado e o reconhecido na decisão para calcular os honorários.' : 'Informe o valor cobrado e o valor devido para calcular os honorários previstos.') : (julg ? 'Informe o valor total da condenação e os sucumbenciais para calcular os honorários contratuais.' : 'Informe o valor pretendido da ação para calcular os honorários previstos.');
+    hint.textContent = base > 0 ? `${f.dataset.honManual ? 'Valor informado à mão' : 'Calculado'}: ${num(d.pctHonorarios)}% de ${brl(base)}${b === 'reducao_debito' ? ' de redução' : (julg ? ' de condenação líquida' : '')}${f.dataset.honManual ? ` seria ${brl(calc)} — apague o campo para voltar ao cálculo` : ''}.` : falta;
+    syncRec();
   };
-  g('c-hon').addEventListener('input', () => { f.dataset.honManual = g('c-hon').value.trim() ? '1' : ''; });
+  g('c-hon').addEventListener('input', () => { f.dataset.honManual = g('c-hon').value.trim() ? '1' : ''; syncRec(); });
+  g('c-vrecc').addEventListener('input', () => { g('c-vrecc').dataset.touched = '1'; syncRec(); });
+  g('c-vrecs').addEventListener('input', () => { g('c-vrecs').dataset.touched = '1'; syncRec(); });
+  if (c && res0 === 'recebido') { g('c-vrecc').dataset.touched = '1'; g('c-vrecs').dataset.touched = '1'; }
+  g('c-psp').addEventListener('input', () => { g('c-psp').dataset.touched = '1'; const v = Math.min(100, Math.max(0, num(g('c-psp').value))); g('c-psn').value = Math.round((100 - v) * 100) / 100; refreshHon(); summary(); });
+  g('c-psn').addEventListener('input', () => { g('c-psp').dataset.touched = '1'; const v = Math.min(100, Math.max(0, num(g('c-psn').value))); g('c-psp').value = Math.round((100 - v) * 100) / 100; refreshHon(); summary(); });
   f.querySelectorAll('input[name="c-base"]').forEach(r => r.addEventListener('change', () => { f.dataset.baseTouched = '1'; if (!f.dataset.honManual) g('c-hon').value = ''; if (curBase() === 'reducao_debito' && !g('c-phon').dataset.touched) g('c-phon').value = 25; refreshHon(); summary(); }));
   g('c-phon').addEventListener('input', () => { g('c-phon').dataset.touched = '1'; });
   // tipo de ação de defesa do executado sugere a base "redução do débito"
@@ -1536,7 +1607,7 @@ function openCaseForm(c) {
     f.querySelectorAll('input[name="c-tit"]').forEach(r => r.addEventListener('change', () => {
       const off = curTit() === 'escritorio';
       g('c-partner-field').hidden = off; g('c-split').hidden = off; g('c-fluxo-field').hidden = off || isAssoc(partnerById(g('c-partner').value));
-      if (off) { g('c-pp').value = 0; g('c-pn').value = 100; g('c-fluxo').value = 'escritorio'; } else { const pp = partnerById(g('c-partner').value); if (pp && isNew) { g('c-pp').value = num(pp.pctParceiroPadrao); g('c-pn').value = num(pp.pctNossoPadrao); } }
+      if (off) { g('c-pp').value = 0; g('c-pn').value = 100; g('c-fluxo').value = 'escritorio'; } else { const pp = partnerById(g('c-partner').value); if (pp && isNew) { g('c-pp').value = num(pp.pctParceiroPadrao); g('c-pn').value = num(pp.pctNossoPadrao); } if (!g('c-psp').dataset.touched) { const ps = isAssoc(pp) ? num(g('c-pp').value) : 50; g('c-psp').value = ps; g('c-psn').value = 100 - ps; } }
       if (isNew && !f.dataset.baseTouched) { (off ? g('c-base-causa') : g('c-base-fixo')).checked = true; if (!f.dataset.honManual) g('c-hon').value = ''; }
       refreshHon(); summary();
     }));
@@ -1550,18 +1621,21 @@ function openCaseForm(c) {
     g('c-num').placeholder = jud ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'; g('c-num').inputMode = jud ? 'numeric' : 'text';
     if (jud) g('c-num').value = cnj(g('c-num').value);
   }));
-  f.querySelectorAll('input[name="c-fase"]').forEach(r => r.addEventListener('change', () => { refreshHon(); if (curFase() === 'julgado') setTimeout(() => g('c-vcond').focus(), 0); summary(); }));
-  ['c-vacao', 'c-vcond', 'c-vdeb', 'c-vdev', 'c-vrecon', 'c-phon'].forEach(id => g(id).addEventListener('input', refreshHon));
+  const focusCond = () => setTimeout(() => (curBase() === 'reducao_debito' ? g('c-vrecon') : g('c-vcond')).focus(), 0);
+  f.querySelectorAll('input[name="c-fase"]').forEach(r => r.addEventListener('change', () => { refreshHon(); if (curFase() === 'julgado' && curRes() !== 'recebido') focusCond(); summary(); }));
+  ['c-vacao', 'c-vcond', 'c-vdeb', 'c-vdev', 'c-vrecon', 'c-vsuc', 'c-phon'].forEach(id => g(id).addEventListener('input', refreshHon));
   f.querySelectorAll('input[name="c-res"]').forEach(r => r.addEventListener('change', () => {
     const res = curRes();
     g('rec-fields').hidden = res !== 'recebido'; g('lost-fields').hidden = res !== 'perdido';
-    if (res === 'recebido') { if (!g('c-vrec').value.trim()) g('c-vrec').value = g('c-hon').value; if (!g('c-drec').value) g('c-drec').value = todayISO(); }
+    refreshHon();
+    if (res === 'recebido') { if (!g('c-drec').value) g('c-drec').value = todayISO(); focusCond(); }
     if (res === 'perdido' && !g('c-denc').value) g('c-denc').value = todayISO();
     summary();
   }));
   $$('.money', f).forEach(i => i.addEventListener('blur', () => { if (i.value.trim()) i.value = moneyInput(parseMoney(i.value)); }));
-  g('c-pp').addEventListener('input', () => { const v = Math.min(100, Math.max(0, num(g('c-pp').value))); g('c-pn').value = Math.round((100 - v) * 100) / 100; summary(); });
-  g('c-pn').addEventListener('input', () => { const v = Math.min(100, Math.max(0, num(g('c-pn').value))); g('c-pp').value = Math.round((100 - v) * 100) / 100; summary(); });
+  const followPp = () => { if (!g('c-psp').dataset.touched && isAssoc(partnerById(admin ? g('c-partner').value : myPartnerId()))) { g('c-psp').value = num(g('c-pp').value); g('c-psn').value = Math.round((100 - num(g('c-pp').value)) * 100) / 100; } };
+  g('c-pp').addEventListener('input', () => { const v = Math.min(100, Math.max(0, num(g('c-pp').value))); g('c-pn').value = Math.round((100 - v) * 100) / 100; followPp(); refreshHon(); summary(); });
+  g('c-pn').addEventListener('input', () => { const v = Math.min(100, Math.max(0, num(g('c-pn').value))); g('c-pp').value = Math.round((100 - v) * 100) / 100; followPp(); refreshHon(); summary(); });
   g('c-cor').addEventListener('change', () => { g('cor-fields').hidden = !g('c-cor').checked; summary(); });
   if (admin) g('c-partner').addEventListener('change', () => {
     const pp = partnerById(g('c-partner').value), a = isAssoc(pp);
@@ -1570,27 +1644,32 @@ function openCaseForm(c) {
     g('c-pp-label').innerHTML = `${a ? 'Bonificação do associado' : 'Parceiro'} <small>(%)</small>`;
     g('c-split-hint').textContent = a ? `Padrão do associado: ${num(pp.pctBonificacaoPadrao)}% sobre os honorários recebidos. Altere apenas se este processo tiver acordo diferente.` : 'Os dois percentuais somam 100%. Ao alterar um, o outro é ajustado.';
     g('c-fluxo-field').hidden = a; if (a) g('c-fluxo').value = 'escritorio';
-    summary();
+    g('c-psp-label').innerHTML = `${a ? 'Associado' : 'Parceiro'} <small>(%)</small>`;
+    g('c-psuc-hint').textContent = a ? 'Por padrão a bonificação do associado também incide sobre os sucumbenciais; ajuste se o acordo for outro.' : 'Na parceria, os sucumbenciais são divididos meio a meio por padrão. Quando o processo é só do escritório, ficam 100% conosco.';
+    if (isNew && !g('c-psp').dataset.touched) { const ps = a ? num(g('c-pp').value) : 50; g('c-psp').value = ps; g('c-psn').value = 100 - ps; }
+    refreshHon(); summary();
   });
   f.addEventListener('input', () => summary());
   function collect() {
-    const res = curRes(), off = curTit() === 'escritorio';
+    const res = curRes(), off = curTit() === 'escritorio', concl = curFase() === 'julgado' || res === 'recebido';
     return {
       parceiroId: off ? null : (admin ? g('c-partner').value : myPartnerId()),
       titularidade: off ? 'escritorio' : 'parceria',
       baseHonorarios: curBase(),
       valorAcao: curBase() === 'valor_causa' ? mon('c-vacao') : null,
-      valorCondenacao: curBase() === 'valor_causa' && curFase() === 'julgado' ? mon('c-vcond') : null,
+      valorCondenacao: curBase() !== 'reducao_debito' && concl ? mon('c-vcond') : null,
       valorDebito: curBase() === 'reducao_debito' ? mon('c-vdeb') : null,
       valorDevido: curBase() === 'reducao_debito' ? mon('c-vdev') : null,
-      valorReconhecido: curBase() === 'reducao_debito' && curFase() === 'julgado' ? mon('c-vrecon') : null,
+      valorReconhecido: curBase() === 'reducao_debito' && concl ? mon('c-vrecon') : null,
+      honorariosSucumbenciais: concl ? parseMoney(g('c-vsuc').value) : 0,
+      pctSucumbParceiro: off ? 0 : num(g('c-psp').value),
       pctHonorarios: curBase() !== 'fixo' ? num(g('c-phon').value) : null,
       honorariosIniciais: parseMoney(g('c-hini').value),
       natureza: curNat(), fase: curFase(), resultado: res,
       numeroProcesso: curNat() === 'judicial' ? cnj(g('c-num').value) : g('c-num').value.trim(), cliente: g('c-cliente').value.trim(), tipoAcao: g('c-tipo').value.trim(), dataProtocolo: g('c-data').value,
       honorariosPretendidos: parseMoney(g('c-hon').value), custoLead: parseMoney(g('c-lead').value),
       pctParceiro: off ? 0 : num(g('c-pp').value), pctNosso: off ? 100 : num(g('c-pn').value),
-      recebido: res === 'recebido', valorRecebido: res === 'recebido' ? parseMoney(g('c-vrec').value) : null, dataRecebimento: res === 'recebido' ? g('c-drec').value : null,
+      recebido: res === 'recebido', valorRecebido: res === 'recebido' ? round2(parseMoney(g('c-vrecc').value) + parseMoney(g('c-vrecs').value)) : null, sucumbRecebido: res === 'recebido' ? parseMoney(g('c-vrecs').value) : 0, dataRecebimento: res === 'recebido' ? g('c-drec').value : null,
       fluxoRecebimento: res === 'recebido' && !off ? g('c-fluxo').value : 'escritorio', dataEncerramento: res === 'perdido' ? g('c-denc').value : null,
       temCorretor: g('c-cor').checked, nomeCorretor: g('c-cor').checked ? g('c-corn').value.trim() : '', valorCorretor: g('c-cor').checked ? parseMoney(g('c-corv').value) : 0, corretorPago: g('c-cor').checked ? g('c-corp').checked : false,
       observacoes: g('c-obs').value.trim()
@@ -1600,9 +1679,10 @@ function openCaseForm(c) {
   function summary() {
     const data = collect(), m = metrics(data);
     const pSel = partnerById(data.parceiroId);
+    const sucItem = m.sucumb > 0 || m.sucRec > 0 ? `<div><div class="lbl">Sucumbenciais${data.titularidade === 'escritorio' ? ' (100% escritório)' : ''}</div><div class="v">${brl(m.recebido > 0 ? m.sucRec : m.sucumb)}</div></div>` : '';
     g('c-summary').innerHTML = data.titularidade === 'escritorio'
-      ? `<div><div class="lbl">${baseOf(data) === 'reducao_debito' ? 'Redução do débito' : faseOf(data) === 'julgado' && has(data.valorCondenacao) ? 'Valor da condenação' : 'Valor pretendido da ação'}</div><div class="v">${brl(honBase(data))}</div></div><div><div class="lbl">${honLabel(data)}</div><div class="v">${brl(m.nossaParte)}</div></div><div><div class="lbl">Honorários iniciais</div><div class="v">${brl(data.honorariosIniciais)}</div></div><div><div class="lbl">Líquido do escritório</div><div class="v">${brl(data.honorariosIniciais + m.nossaParte - m.custoLead - m.corretor)}</div></div>`
-      : `<div><div class="lbl">${shareLabel(pSel, 'partner')}</div><div class="v">${brl(m.parteParceiro)}</div></div><div><div class="lbl">${shareLabel(pSel, 'office')}</div><div class="v">${brl(m.nossaParte)}</div></div><div><div class="lbl">Honorários iniciais</div><div class="v">${brl(data.honorariosIniciais)}</div></div><div><div class="lbl">Líquido do escritório</div><div class="v">${brl(m.nossaParte - m.custoLead - m.corretor)}</div></div>`;
+      ? `<div><div class="lbl">${baseOf(data) === 'reducao_debito' ? 'Redução do débito' : concl(data) && has(data.valorCondenacao) ? 'Condenação líquida' : 'Valor pretendido da ação'}</div><div class="v">${brl(honBase(data))}</div></div><div><div class="lbl">${m.recebido > 0 ? 'Honorários contratuais recebidos' : honLabel(data)}</div><div class="v">${brl(m.recebido > 0 ? m.contrRec : m.contratual)}</div></div>${sucItem}<div><div class="lbl">Honorários iniciais</div><div class="v">${brl(data.honorariosIniciais)}</div></div><div><div class="lbl">Líquido do escritório</div><div class="v">${brl(data.honorariosIniciais + m.nossaParte - m.custoLead - m.corretor)}</div></div>`
+      : `<div><div class="lbl">${shareLabel(pSel, 'partner')}</div><div class="v">${brl(m.parteParceiro)}</div></div><div><div class="lbl">${shareLabel(pSel, 'office')}</div><div class="v">${brl(m.nossaParte)}</div></div>${sucItem}<div><div class="lbl">Honorários iniciais</div><div class="v">${brl(data.honorariosIniciais)}</div></div><div><div class="lbl">Líquido do escritório</div><div class="v">${brl(m.nossaParte - m.custoLead - m.corretor)}</div></div>`;
     const box = g('fin-box'); if (!box) return;
     if (data.resultado !== 'recebido') { box.innerHTML = finStatus === 'lancado' ? '<div class="note">Este processo já tinha lançamentos no Financeiro; ao salvar com outra situação, eles serão removidos.</div>' : ''; return; }
     if (finStatus === 'lancado') { box.innerHTML = `<div class="note">Recebimento já lançado no Financeiro em ${fmtDate((c?.financeiroEm || '').slice(0, 10))}. Alterações de valor devem ser ajustadas na aba Financeiro.</div>`; return; }
@@ -1627,14 +1707,16 @@ function openCaseForm(c) {
     const data = collect(), err = g('c-err');
     if (data.titularidade === 'parceria' && !data.parceiroId) return err.textContent = 'Selecione o advogado parceiro ou associado.';
     if (data.baseHonorarios === 'reducao_debito' && data.valorDebito != null && data.valorDevido != null && data.valorDevido > data.valorDebito) return err.textContent = 'O valor que entendemos devido não pode ser maior que o valor cobrado na execução.';
-    if (data.resultado !== 'perdido' && !(data.honorariosPretendidos > 0)) return err.textContent = data.baseHonorarios === 'reducao_debito' ? 'Informe o valor cobrado na execução e o valor devido (ou os honorários previstos).' : data.baseHonorarios === 'valor_causa' ? (data.fase === 'julgado' ? 'Informe o valor da condenação (ou os honorários).' : 'Informe o valor pretendido da ação e o % de honorários (ou os honorários previstos).') : 'Informe o valor dos honorários finais combinados.';
+    if (data.valorCondenacao != null && data.honorariosSucumbenciais > data.valorCondenacao) return err.textContent = 'Os honorários sucumbenciais não podem ser maiores que o valor total da condenação.';
+    if (data.resultado === 'recebido' && data.baseHonorarios !== 'reducao_debito' && data.valorCondenacao == null && !(data.honorariosSucumbenciais > 0) && !(data.honorariosPretendidos > 0)) return err.textContent = 'Informe o valor total da condenação e quanto dela é honorário sucumbencial.';
+    if (data.resultado !== 'perdido' && !(data.honorariosPretendidos > 0) && !(data.resultado === 'recebido' && data.valorRecebido > 0)) return err.textContent = data.baseHonorarios === 'reducao_debito' ? 'Informe o valor cobrado na execução e o valor devido (ou os honorários previstos).' : data.baseHonorarios === 'valor_causa' ? (concl(data) ? 'Informe o valor total da condenação e os sucumbenciais (ou os honorários contratuais).' : 'Informe o valor pretendido da ação e o % de honorários (ou os honorários previstos).') : 'Informe o valor dos honorários finais combinados.';
     if (!data.numeroProcesso) return err.textContent = 'Informe o número do processo.';
     if (!data.cliente) return err.textContent = 'Informe o nome do cliente.';
     if (!data.tipoAcao) return err.textContent = 'Informe o tipo de ação.';
     if (!data.dataProtocolo) return err.textContent = 'Informe a data do protocolo.';
     if (Math.abs(data.pctParceiro + data.pctNosso - 100) > 0.01) return err.textContent = 'Os percentuais precisam somar 100%.';
     if (data.resultado === 'recebido' && !data.dataRecebimento) return err.textContent = 'Informe a data do recebimento.';
-    if (data.resultado === 'recebido' && !(data.valorRecebido > 0)) return err.textContent = 'Informe o valor recebido.';
+    if (data.resultado === 'recebido' && !(data.valorRecebido > 0)) return err.textContent = 'Informe quanto recebemos (honorários contratuais e/ou sucumbenciais).';
     if (data.resultado === 'perdido' && !data.dataEncerramento) return err.textContent = 'Informe a data do encerramento.';
     if (isNew) {
       const digits = data.numeroProcesso.replace(/\D/g, '');
@@ -2232,8 +2314,8 @@ async function exportCSV() {
   const list = filtered(true);
   const n = v => num(v).toFixed(2).replace('.', ',');
   const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const head = ['Data do protocolo', 'Natureza', 'Fase', 'Situação', 'Número do processo', 'Cliente', 'Parceiro', 'Tipo de ação', 'Base dos honorários', 'Valor da ação', 'Valor da condenação', 'Débito cobrado', 'Valor devido', 'Valor reconhecido', '% honorários finais', 'Honorários iniciais', 'Honorários pretendidos', 'Custo do lead', '% parceiro', '% escritório', 'Parte do parceiro', 'Parte do escritório', 'Recebido', 'Valor recebido', 'Data do recebimento', 'Corretor', 'Nome do corretor', 'Valor do corretor', 'Corretor pago', 'Observações'];
-  const rows = list.map(c => { const m = metrics(c); return [fmtDate(c.dataProtocolo), natOf(c) === 'judicial' ? 'Judicial' : 'Administrativo', faseOf(c) === 'julgado' ? 'Julgado' : 'Em curso', { em_andamento: 'Em andamento', recebido: 'Recebido', perdido: 'Perdido' }[resultadoOf(c)], numFmt(c), c.cliente, partnerName(c.parceiroId), c.tipoAcao, BASE_NOMES[baseOf(c)], c.valorAcao != null ? n(c.valorAcao) : '', c.valorCondenacao != null ? n(c.valorCondenacao) : '', c.valorDebito != null ? n(c.valorDebito) : '', c.valorDevido != null ? n(c.valorDevido) : '', c.valorReconhecido != null ? n(c.valorReconhecido) : '', c.pctHonorarios != null ? n(c.pctHonorarios) : '', n(c.honorariosIniciais), n(m.pretendido), n(m.custoLead), n(c.pctParceiro), n(c.pctNosso), n(m.parteParceiro), n(m.nossaParte), c.recebido ? 'Sim' : 'Não', c.recebido ? n(m.recebido) : '', c.recebido ? fmtDate(c.dataRecebimento) : '', c.temCorretor ? 'Sim' : 'Não', c.nomeCorretor || '', c.temCorretor ? n(c.valorCorretor) : '', c.temCorretor ? (c.corretorPago ? 'Sim' : 'Não') : '', c.observacoes || ''].map(q).join(';'); });
+  const head = ['Data do protocolo', 'Natureza', 'Fase', 'Situação', 'Número do processo', 'Cliente', 'Parceiro', 'Tipo de ação', 'Base dos honorários', 'Valor da ação', 'Valor total da condenação', 'Honorários sucumbenciais', 'Condenação líquida', 'Débito cobrado', 'Valor devido', 'Valor reconhecido', '% honorários finais', 'Honorários iniciais', 'Honorários contratuais previstos', 'Honorários pretendidos (contratuais + sucumbenciais)', 'Custo do lead', '% parceiro', '% escritório', '% sucumbenciais do parceiro', 'Parte do parceiro', 'Parte do escritório', 'Recebido', 'Valor recebido', 'Contratuais recebidos', 'Sucumbenciais recebidos', 'Data do recebimento', 'Corretor', 'Nome do corretor', 'Valor do corretor', 'Corretor pago', 'Observações'];
+  const rows = list.map(c => { const m = metrics(c); return [fmtDate(c.dataProtocolo), natOf(c) === 'judicial' ? 'Judicial' : 'Administrativo', faseOf(c) === 'julgado' ? 'Julgado' : 'Em curso', { em_andamento: 'Em andamento', recebido: 'Recebido', perdido: 'Perdido' }[resultadoOf(c)], numFmt(c), c.cliente, partnerName(c.parceiroId), c.tipoAcao, BASE_NOMES[baseOf(c)], c.valorAcao != null ? n(c.valorAcao) : '', c.valorCondenacao != null ? n(c.valorCondenacao) : '', m.sucumb > 0 ? n(m.sucumb) : '', condLiquida(c) != null ? n(condLiquida(c)) : '', c.valorDebito != null ? n(c.valorDebito) : '', c.valorDevido != null ? n(c.valorDevido) : '', c.valorReconhecido != null ? n(c.valorReconhecido) : '', c.pctHonorarios != null ? n(c.pctHonorarios) : '', n(c.honorariosIniciais), n(m.contratual), n(m.pretendido), n(m.custoLead), n(c.pctParceiro), n(c.pctNosso), isOffice(c) ? '' : n(pctSucumbOf(c)), n(m.parteParceiro), n(m.nossaParte), c.recebido ? 'Sim' : 'Não', c.recebido ? n(m.recebido) : '', c.recebido ? n(m.contrRec) : '', c.recebido ? n(m.sucRec) : '', c.recebido ? fmtDate(c.dataRecebimento) : '', c.temCorretor ? 'Sim' : 'Não', c.nomeCorretor || '', c.temCorretor ? n(c.valorCorretor) : '', c.temCorretor ? (c.corretorPago ? 'Sim' : 'Não') : '', c.observacoes || ''].map(q).join(';'); });
   const csv = '﻿' + head.map(q).join(';') + '\r\n' + rows.join('\r\n');
   try { const ok = await api.exportCSV(`parcerias-processos-${todayISO()}.csv`, csv); if (ok) toast('Arquivo exportado.'); }
   catch (err) { toast(err?.message || 'Não foi possível exportar.', true); }

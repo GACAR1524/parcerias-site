@@ -160,7 +160,7 @@
     },
     async _postFinance(caseId, lancamentos) {
       const now = new Date().toISOString();
-      for (const e of lancamentos) await guard(st.db.collection('finance').add({ ...e, caseId, observacoes: '', criadoEm: now, atualizadoEm: now }));
+      for (const e of lancamentos) await guard(st.db.collection('finance').add({ ...e, caseId, observacoes: e.observacoes || '', criadoEm: now, atualizadoEm: now }));
       await guard(st.db.doc('cases/' + caseId).update({ financeiroStatus: 'lancado', financeiroEm: now }));
     },
     async deleteCase(id) { await guard(st.db.doc('cases/' + id).delete()); },

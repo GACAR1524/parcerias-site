@@ -35,16 +35,21 @@ function caseInput(b) {
   if (titularidade !== 'parceria' && titularidade !== 'escritorio') fail('Titularidade inválida: use parceria ou escritorio.');
   const baseHonorarios = str(b.baseHonorarios || (titularidade === 'escritorio' ? 'valor_causa' : 'fixo'), 20).toLowerCase();
   if (!['valor_causa', 'reducao_debito', 'fixo'].includes(baseHonorarios)) fail('Base dos honorários inválida: use valor_causa, reducao_debito ou fixo.');
+  // julgado OU recebido: já há condenação definida (ao receber, perguntamos a condenação total e os sucumbenciais dentro dela)
+  const concluido = fase === 'julgado' || resultado === 'recebido';
   const c = {
     parceiroId: titularidade === 'escritorio' ? null : str(b.parceiroId, 64),
     titularidade,
     valorAcao: b.valorAcao == null || b.valorAcao === '' ? null : money(b.valorAcao),
-    valorCondenacao: fase === 'julgado' && b.valorCondenacao != null && b.valorCondenacao !== '' ? money(b.valorCondenacao) : null,
+    valorCondenacao: concluido && b.valorCondenacao != null && b.valorCondenacao !== '' ? money(b.valorCondenacao) : null,
     baseHonorarios,
     valorDebito: baseHonorarios === 'reducao_debito' && b.valorDebito != null && b.valorDebito !== '' ? money(b.valorDebito) : null,
     valorDevido: baseHonorarios === 'reducao_debito' && b.valorDevido != null && b.valorDevido !== '' ? money(b.valorDevido) : null,
-    valorReconhecido: baseHonorarios === 'reducao_debito' && fase === 'julgado' && b.valorReconhecido != null && b.valorReconhecido !== '' ? money(b.valorReconhecido) : null,
+    valorReconhecido: baseHonorarios === 'reducao_debito' && concluido && b.valorReconhecido != null && b.valorReconhecido !== '' ? money(b.valorReconhecido) : null,
     honorariosIniciais: money(b.honorariosIniciais ?? 0),
+    honorariosSucumbenciais: concluido ? money(b.honorariosSucumbenciais ?? 0) : 0,
+    pctSucumbParceiro: titularidade === 'escritorio' ? 0 : pctv(b.pctSucumbParceiro ?? 50),
+    sucumbRecebido: 0,
     pctHonorarios: baseHonorarios !== 'fixo' && b.pctHonorarios != null && b.pctHonorarios !== '' ? pctv(b.pctHonorarios) : null,
     natureza, fase, resultado,
     numeroProcesso: natureza === 'judicial' ? cnj(str(b.numeroProcesso, 40)) : str(b.numeroProcesso, 60),
@@ -66,17 +71,21 @@ function caseInput(b) {
   // honorários finais = % sobre a base (valor da causa/condenação ou redução do débito), salvo valor informado à mão
   if (baseHonorarios !== 'fixo' && !(c.honorariosPretendidos > 0) && c.pctHonorarios != null) {
     let base = null;
-    if (baseHonorarios === 'valor_causa') base = fase === 'julgado' && c.valorCondenacao != null ? c.valorCondenacao : c.valorAcao;
-    else { const alvo = fase === 'julgado' && c.valorReconhecido != null ? c.valorReconhecido : c.valorDevido; if (c.valorDebito != null && alvo != null) base = Math.max(0, c.valorDebito - alvo); }
+    // concluído: a base contratual é a condenação líquida (total − honorários sucumbenciais, que são só dos advogados)
+    if (baseHonorarios === 'valor_causa') base = concluido && c.valorCondenacao != null ? Math.max(0, c.valorCondenacao - c.honorariosSucumbenciais) : c.valorAcao;
+    else { const alvo = concluido && c.valorReconhecido != null ? c.valorReconhecido : c.valorDevido; if (c.valorDebito != null && alvo != null) base = Math.max(0, c.valorDebito - alvo); }
     if (base != null) c.honorariosPretendidos = Math.round(base * c.pctHonorarios) / 100;
   }
   if (baseHonorarios === 'reducao_debito' && c.valorDebito != null && c.valorDevido != null && c.valorDevido > c.valorDebito) fail('O valor que entendemos devido não pode ser maior que o valor cobrado na execução.');
+  if (c.valorCondenacao != null && c.honorariosSucumbenciais > c.valorCondenacao) fail('Os honorários sucumbenciais não podem ser maiores que o valor total da condenação.');
   if (!c.numeroProcesso) fail('Informe o número do processo.');
   if (!c.cliente) fail('Informe o nome do cliente.');
   if (!c.tipoAcao) fail('Informe o tipo de ação.');
   if (Math.abs(c.pctParceiro + c.pctNosso - 100) > 0.01) fail('Os percentuais precisam somar 100%.');
   if (c.recebido) {
-    c.valorRecebido = b.valorRecebido == null || b.valorRecebido === '' ? c.honorariosPretendidos : money(b.valorRecebido);
+    c.valorRecebido = b.valorRecebido == null || b.valorRecebido === '' ? c.honorariosPretendidos + c.honorariosSucumbenciais : money(b.valorRecebido);
+    c.sucumbRecebido = b.sucumbRecebido == null || b.sucumbRecebido === '' ? Math.min(c.honorariosSucumbenciais, c.valorRecebido) : money(b.sucumbRecebido);
+    if (c.sucumbRecebido > c.valorRecebido) fail('Os sucumbenciais recebidos não podem ser maiores que o total recebido.');
     c.dataRecebimento = dateISO(b.dataRecebimento, 'data do recebimento');
     c.fluxoRecebimento = b.fluxoRecebimento === 'parceiro' ? 'parceiro' : 'escritorio';
   }

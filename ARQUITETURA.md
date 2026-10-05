@@ -313,6 +313,25 @@ informado ainda não lançado.
 processos quando julgados (opcional nas parcerias, onde a divisão continua incidindo sobre os
 honorários); em curso, o valor pretendido da ação é opcional nas parcerias.
 
+**Honorários sucumbenciais (v11).** O número da decisão — `valor_condenacao`, o **valor total da
+condenação** — normalmente já inclui os honorários de sucumbência, que são **só dos advogados**.
+Por isso o processo guarda, separado, `honorarios_sucumbenciais` (quanto daquele total é
+sucumbência). A **condenação líquida** (`valor_condenacao − honorarios_sucumbenciais`) é a base dos
+honorários contratuais (`honorarios_pretendidos`, calculados como `% × condenação líquida` na base
+*valor_causa*); os sucumbenciais entram por fora. Divisão própria: `pct_sucumb_parceiro` — padrão
+**50 % na parceria** (metade de cada um), **0 % quando o processo é só do escritório** (100 %
+nosso); no associado a tela sugere a mesma % da bonificação; editável por processo. Os
+"honorários pretendidos" exibidos na tela são contratuais + sucumbenciais. Ao marcar **Finalizado e
+recebido** — mesmo com o processo ainda "em curso" — a tela pergunta, naquele momento, o valor total
+da condenação, quanto dele é sucumbência, e quanto recebemos de cada parte: `valor_recebido` é o
+total que entrou e `sucumb_recebido` a fatia de sucumbenciais; o servidor aceita esses campos quando
+`fase = julgado` **ou** `resultado = recebido` (zera os sucumbenciais fora disso) e recusa
+sucumbenciais maiores que a condenação total ou recebidos maiores que o total recebido. O repasse ao
+parceiro/bonificação sai de `contratual_recebido × pct_parceiro + sucumb_recebido ×
+pct_sucumb_parceiro`, e os lançamentos do Financeiro registram a composição nas observações
+("Honorários contratuais R$ X + honorários sucumbenciais R$ Y"; na despesa de repasse, "a % de X +
+b % de Y").
+
 **Créditos provisionados.** Receitas com `status = provisionado` (parcelas futuras), mensalidades
 de contratos ainda não registradas, créditos comprados não recebidos e a **parte do escritório
 prevista nos processos em andamento** (`metrics(c).nossaParte`: honorários previstos × nossa %)
@@ -358,7 +377,7 @@ Quando um processo passa a **Finalizado e recebido**:
 - No site a regra roda no servidor (`settleFinance`, em `routes/cases.js`, dentro da mesma transação); no artifact, no adaptador `api-claude.js`, que só consegue gravar em `finance` quando o usuário é o proprietário.
 
 Esquema versionado: `schema_version` guarda a versão atual e `db.js` aplica migrações numeradas
-ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
+ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
 
 ## 4. API REST
 

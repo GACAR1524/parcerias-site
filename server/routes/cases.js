@@ -18,22 +18,26 @@ function scoped(req, row) { return req.user.role === 'admin' || row.partner_id =
 /* Lançamentos que um recebimento gera no financeiro (mesma regra da tela). */
 function financeEntriesFor(c, partner) {
   const partnerNome = partner?.nome || 'parceiro', associado = partner?.tipo === 'associado';
-  if (c.titularidade === 'escritorio' || !c.parceiroId) {
-    const recebidoTotal = c.valorRecebido == null ? c.honorariosPretendidos : c.valorRecebido;
-    const numeroE = c.natureza === 'judicial' ? cnj(c.numeroProcesso) : c.numeroProcesso;
-    return recebidoTotal > 0 ? [{ tipo: 'receita', categoria: c.fase === 'julgado' ? 'Alvará de honorários finais' : 'Honorários de êxito', descricao: `Processo ${numeroE} — ${c.cliente} (escritório)`, valor: round2(recebidoTotal) }] : [];
-  }
-  const recebido = c.valorRecebido == null ? c.honorariosPretendidos : c.valorRecebido;
-  const nossa = round2(recebido * c.pctNosso / 100), parceiro = round2(recebido * c.pctParceiro / 100);
+  const brl = v => 'R$ ' + round2(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const recebido = c.valorRecebido == null ? c.honorariosPretendidos + (c.honorariosSucumbenciais || 0) : c.valorRecebido;
+  // sucumbenciais são só dos advogados e seguem divisão própria (meio a meio por padrão); o contratual segue a divisão do processo
+  const sucRec = Math.min(c.sucumbRecebido || 0, recebido), contrRec = round2(recebido - sucRec);
+  const composicao = sucRec > 0 ? `Honorários contratuais ${brl(contrRec)} + honorários sucumbenciais ${brl(sucRec)}.` : '';
   const numero = c.natureza === 'judicial' ? cnj(c.numeroProcesso) : c.numeroProcesso;
   const ref = `Processo ${numero} — ${c.cliente}`;
+  if (c.titularidade === 'escritorio' || !c.parceiroId) {
+    return recebido > 0 ? [{ tipo: 'receita', categoria: c.fase === 'julgado' ? 'Alvará de honorários finais' : 'Honorários de êxito', descricao: `${ref} (escritório)`, valor: round2(recebido), observacoes: composicao }] : [];
+  }
+  const pS = c.pctSucumbParceiro || 0;
+  const parceiro = round2(contrRec * c.pctParceiro / 100 + sucRec * pS / 100), nossa = round2(recebido - parceiro);
+  const divisao = sucRec > 0 ? `${c.pctParceiro}% de ${brl(contrRec)} (contratuais) + ${pS}% de ${brl(sucRec)} (sucumbenciais).` : '';
   const categoria = c.fase === 'julgado' ? 'Alvará de honorários finais' : (associado ? 'Honorários de êxito' : 'Honorários de parceria');
   const out = [];
-  if (!associado && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${partnerNome})`, valor: nossa });
+  if (!associado && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${partnerNome})`, valor: nossa, observacoes: sucRec > 0 ? `Total recebido ${brl(recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '' });
   else {
-    out.push({ tipo: 'receita', categoria, descricao: `${ref} (valor total recebido)`, valor: round2(recebido) });
-    if (associado) out.push({ tipo: 'despesa', categoria: 'Bonificação de associado', descricao: `Bonificação de ${partnerNome} — ${ref}`, valor: parceiro, associadoId: partner.id });
-    else out.push({ tipo: 'despesa', categoria: 'Repasse a parceiro', descricao: `Repasse a ${partnerNome} — ${ref}`, valor: parceiro });
+    out.push({ tipo: 'receita', categoria, descricao: `${ref} (valor total recebido)`, valor: round2(recebido), observacoes: composicao });
+    if (associado) out.push({ tipo: 'despesa', categoria: 'Bonificação de associado', descricao: `Bonificação de ${partnerNome} — ${ref}`, valor: parceiro, associadoId: partner.id, observacoes: divisao });
+    else out.push({ tipo: 'despesa', categoria: 'Repasse a parceiro', descricao: `Repasse a ${partnerNome} — ${ref}`, valor: parceiro, observacoes: divisao });
   }
   return out.filter(e => e.valor > 0);
 }
@@ -58,7 +62,7 @@ function settleFinance({ cur, c, id, req }) {
       if (partner?.tipo === 'associado' || !partner) c.fluxoRecebimento = 'escritorio';
       for (const e of financeEntriesFor(c, partner)) {
         db.prepare(`INSERT INTO finance_entries (id, tipo, categoria, descricao, valor, data, observacoes, case_id, associado_id, criado_por, atualizado_por, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(uuid(), e.tipo, e.categoria, e.descricao, e.valor, c.dataRecebimento, '', id, e.associadoId || null, req.user.id, req.user.id, now, now);
+          .run(uuid(), e.tipo, e.categoria, e.descricao, e.valor, c.dataRecebimento, e.observacoes || '', id, e.associadoId || null, req.user.id, req.user.id, now, now);
       }
       status = 'lancado'; em = now;
     } else status = 'pendente';
@@ -79,11 +83,11 @@ router.post('/', (req, res, next) => {
     const now = nowISO(), id = uuid();
     db.transaction(() => {
       const fin = settleFinance({ cur: null, c, id, req });
-      db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, natureza, fase, resultado, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
+      db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, honorarios_sucumbenciais, pct_sucumb_parceiro, sucumb_recebido, natureza, fase, resultado, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
         recebido, valor_recebido, data_recebimento, data_encerramento, fluxo_recebimento, financeiro_status, financeiro_em,
         tem_corretor, nome_corretor, valor_corretor, corretor_pago, observacoes, criado_por, atualizado_por, criado_em, atualizado_em)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.honorariosSucumbenciais, c.pctSucumbParceiro, c.sucumbRecebido, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
           c.recebido ? 1 : 0, c.valorRecebido, c.dataRecebimento, c.dataEncerramento, c.fluxoRecebimento, fin.status, fin.em,
           c.temCorretor ? 1 : 0, c.nomeCorretor, c.valorCorretor, c.corretorPago ? 1 : 0, c.observacoes, req.user.id, req.user.id, now, now);
     })();
@@ -101,10 +105,10 @@ router.put('/:id', (req, res, next) => {
     if (c.titularidade === 'parceria' && !partnerById.get(c.parceiroId)) return res.status(400).json({ error: 'Parceiro inválido.' });
     db.transaction(() => {
       const fin = settleFinance({ cur, c, id: cur.id, req });
-      db.prepare(`UPDATE cases SET partner_id=?, titularidade=?, valor_acao=?, valor_condenacao=?, pct_honorarios=?, base_honorarios=?, valor_debito=?, valor_devido=?, valor_reconhecido=?, honorarios_iniciais=?, natureza=?, fase=?, resultado=?, numero_processo=?, cliente=?, tipo_acao=?, data_protocolo=?, honorarios_pretendidos=?, custo_lead=?, pct_parceiro=?, pct_nosso=?,
+      db.prepare(`UPDATE cases SET partner_id=?, titularidade=?, valor_acao=?, valor_condenacao=?, pct_honorarios=?, base_honorarios=?, valor_debito=?, valor_devido=?, valor_reconhecido=?, honorarios_iniciais=?, honorarios_sucumbenciais=?, pct_sucumb_parceiro=?, sucumb_recebido=?, natureza=?, fase=?, resultado=?, numero_processo=?, cliente=?, tipo_acao=?, data_protocolo=?, honorarios_pretendidos=?, custo_lead=?, pct_parceiro=?, pct_nosso=?,
         recebido=?, valor_recebido=?, data_recebimento=?, data_encerramento=?, fluxo_recebimento=?, financeiro_status=?, financeiro_em=?,
         tem_corretor=?, nome_corretor=?, valor_corretor=?, corretor_pago=?, observacoes=?, atualizado_por=?, atualizado_em=? WHERE id=?`)
-        .run(c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
+        .run(c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.honorariosSucumbenciais, c.pctSucumbParceiro, c.sucumbRecebido, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
           c.recebido ? 1 : 0, c.valorRecebido, c.dataRecebimento, c.dataEncerramento, c.fluxoRecebimento, fin.status, fin.em,
           c.temCorretor ? 1 : 0, c.nomeCorretor, c.valorCorretor, c.corretorPago ? 1 : 0, c.observacoes, req.user.id, nowISO(), cur.id);
     })();

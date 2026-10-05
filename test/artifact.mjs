@@ -131,10 +131,14 @@ try {
   await page.waitForSelector('#case-form', { timeout: 8000 });
   await page.check('#c-fase-julg'); await page.fill('#c-vcond', '50000'); await page.press('#c-vcond', 'Tab');
   check('honorários recalculados sobre a condenação no artifact', (await page.inputValue('#c-hon')) === '10.000,00');
-  await page.check('#c-res-rec'); await page.waitForSelector('#c-lancar'); await page.fill('#c-vrec', '9500'); await page.press('#c-vrec', 'Tab');
+  await page.fill('#c-vsuc', '5000'); await page.press('#c-vsuc', 'Tab'); await page.waitForTimeout(100);
+  check('sucumbenciais saem da base no artifact (20% de 45 mil = 9.000)', (await page.inputValue('#c-hon')) === '9.000,00');
+  await page.check('#c-res-rec'); await page.waitForSelector('#c-lancar');
+  check('recebido no artifact: contratuais 9.000 + sucumbenciais 5.000 preenchidos', (await page.inputValue('#c-vrecc')) === '9.000,00' && (await page.inputValue('#c-vrecs')) === '5.000,00');
+  await page.fill('#c-vrecc', '8500'); await page.press('#c-vrecc', 'Tab');
   await page.click('#c-save'); await page.waitForFunction(() => !document.querySelector('#case-form'), null, { timeout: 8000 });
   await page.waitForTimeout(300);
-  check('processo julgado e recebido: condenação, valor recebido e receita de alvará gravados', await page.evaluate(() => { const c = [...window.__mockStore.cases.values()].find(x => x.cliente === 'Cliente Direto'); const f = [...window.__mockStore.finance.values()]; return c.fase === 'julgado' && c.valorCondenacao === 50000 && c.honorariosPretendidos === 10000 && c.valorRecebido === 9500 && c.financeiroStatus === 'lancado' && f.some(e => e.categoria === 'Alvará de honorários finais' && e.valor === 9500); }));
+  check('processo julgado e recebido: condenação, sucumbenciais, valor recebido e receita de alvará gravados', await page.evaluate(() => { const c = [...window.__mockStore.cases.values()].find(x => x.cliente === 'Cliente Direto'); const f = [...window.__mockStore.finance.values()]; return c.fase === 'julgado' && c.valorCondenacao === 50000 && c.honorariosSucumbenciais === 5000 && c.honorariosPretendidos === 9000 && c.valorRecebido === 13500 && c.sucumbRecebido === 5000 && c.financeiroStatus === 'lancado' && f.some(e => e.categoria === 'Alvará de honorários finais' && e.valor === 13500 && /sucumbenciais/.test(e.observacoes)); }));
 
   // visão geral
   await page.click('[data-tab="overview"]'); await page.waitForSelector('.seg', { timeout: 8000 });

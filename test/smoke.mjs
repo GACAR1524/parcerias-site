@@ -300,6 +300,32 @@ try {
   check('processo de parceria antigo fica como "valor combinado"', legacy && legacy.baseHonorarios === 'fixo' && legacy.honorariosIniciais === 0, legacy);
   await call('a', 'DELETE', `/cases/${cidX}`);
 
+  // ---- honorários sucumbenciais: dentro da condenação, só dos advogados, divisão própria ----
+  r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800009-99.2026.8.17.0001', cliente: 'Condenado S.A.', tipoAcao: 'Ação indenizatória', dataProtocolo: '2026-10-01', valorAcao: 80000, pctHonorarios: 20, fase: 'julgado', valorCondenacao: 110000, honorariosSucumbenciais: 10000 });
+  check('julgado: contratuais = 20% da condenação líquida (110 mil − 10 mil de sucumbenciais = 100 mil → 20 mil); sucumbenciais 100% do escritório', r.status === 201 && r.data.case.honorariosPretendidos === 20000 && r.data.case.honorariosSucumbenciais === 10000 && r.data.case.pctSucumbParceiro === 0, r);
+  const cidS = r.data.id;
+  r = await call('a', 'PUT', `/cases/${cidS}`, { titularidade: 'escritorio', numeroProcesso: '0800009-99.2026.8.17.0001', cliente: 'Condenado S.A.', tipoAcao: 'Ação indenizatória', dataProtocolo: '2026-10-01', valorAcao: 80000, pctHonorarios: 20, fase: 'julgado', valorCondenacao: 50000, honorariosSucumbenciais: 60000 });
+  check('sucumbenciais maiores que a condenação total são recusados', r.status === 400, r);
+  r = await call('a', 'PUT', `/cases/${cidS}`, { titularidade: 'escritorio', numeroProcesso: '0800009-99.2026.8.17.0001', cliente: 'Condenado S.A.', tipoAcao: 'Ação indenizatória', dataProtocolo: '2026-10-01', valorAcao: 80000, pctHonorarios: 20, fase: 'julgado', valorCondenacao: 110000, honorariosSucumbenciais: 10000, resultado: 'recebido', valorRecebido: 30000, sucumbRecebido: 10000, dataRecebimento: '2026-10-05', lancarFinanceiro: true });
+  fin = await finance();
+  check('escritório recebe tudo: uma receita de 30 mil (20 mil contratuais + 10 mil sucumbenciais) com a composição nas observações', r.status === 200 && r.data.case.sucumbRecebido === 10000 && fin.filter(e => e.caseId === cidS).length === 1 && fin.find(e => e.caseId === cidS).valor === 30000 && /sucumbenciais R\$ 10\.000,00/.test(fin.find(e => e.caseId === cidS).observacoes), fin.filter(e => e.caseId === cidS));
+  await call('a', 'DELETE', `/cases/${cidS}`);
+  // parceria: contratuais pela % do processo (40/60), sucumbenciais meio a meio por padrão
+  r = await call('a', 'POST', '/cases', { ...caso, parceiroId: pid, numeroProcesso: '0800010-10.2026.8.17.0001', cliente: 'Parceria Sucumbência', baseHonorarios: 'fixo', honorariosPretendidos: 25000 });
+  const cidP = r.data.id;
+  check('parceria em curso: % dos sucumbenciais do parceiro padrão 50 e sucumbenciais zerados enquanto não há condenação', r.status === 201 && r.data.case.pctSucumbParceiro === 50 && r.data.case.honorariosSucumbenciais === 0, r);
+  // recebido SEM passar por "julgado": a condenação total e os sucumbenciais são informados no recebimento
+  r = await call('a', 'PUT', `/cases/${cidP}`, { ...caso, parceiroId: pid, numeroProcesso: '0800010-10.2026.8.17.0001', cliente: 'Parceria Sucumbência', baseHonorarios: 'fixo', honorariosPretendidos: 25000, fase: 'em_curso', resultado: 'recebido', valorCondenacao: 100000, honorariosSucumbenciais: 10000, valorRecebido: 35000, sucumbRecebido: 10000, dataRecebimento: '2026-10-05', lancarFinanceiro: true });
+  fin = await finance();
+  const recP = fin.find(e => e.caseId === cidP && e.tipo === 'receita'), repP = fin.find(e => e.caseId === cidP && e.tipo === 'despesa');
+  check('recebido em curso guarda condenação total e sucumbenciais', r.status === 200 && r.data.case.valorCondenacao === 100000 && r.data.case.honorariosSucumbenciais === 10000 && r.data.case.sucumbRecebido === 10000 && r.data.case.valorRecebido === 35000, r);
+  check('repasse ao parceiro = 40% de 25 mil (contratuais) + 50% de 10 mil (sucumbenciais) = 15 mil; receita total 35 mil', recP && recP.valor === 35000 && repP && repP.valor === 15000 && /50% de R\$ 10\.000,00/.test(repP.observacoes), { recP, repP });
+  r = await call('a', 'PUT', `/cases/${cidP}`, { ...caso, parceiroId: pid, numeroProcesso: '0800010-10.2026.8.17.0001', cliente: 'Parceria Sucumbência', baseHonorarios: 'fixo', honorariosPretendidos: 25000, fase: 'em_curso', resultado: 'recebido', valorCondenacao: 100000, honorariosSucumbenciais: 10000, valorRecebido: 5000, sucumbRecebido: 10000, dataRecebimento: '2026-10-05' });
+  check('sucumbenciais recebidos maiores que o total recebido são recusados', r.status === 400, r);
+  r = await call('a', 'PUT', `/cases/${cidP}`, { ...caso, parceiroId: pid, numeroProcesso: '0800010-10.2026.8.17.0001', cliente: 'Parceria Sucumbência', baseHonorarios: 'fixo', honorariosPretendidos: 25000, pctSucumbParceiro: 30, fase: 'julgado', valorCondenacao: 100000, honorariosSucumbenciais: 10000 });
+  check('% dos sucumbenciais do parceiro pode ser ajustado por processo', r.status === 200 && r.data.case.pctSucumbParceiro === 30 && r.data.case.sucumbRecebido === 0, r);
+  await call('a', 'DELETE', `/cases/${cidP}`);
+
   // ---- estagiários e controle de ponto ----
   r = await call('a', 'POST', '/partners', { tipo: 'estagiario', nome: 'Pedro Lima', usuario: 'pedro', senha: 'estagio1', curso: 'Direito', instituicao: 'UFMA', bolsa: 900, jornada: { dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00']] } });
   check('admin cadastra estagiário com bolsa e jornada da manhã', r.status === 201 && r.data.partner.tipo === 'estagiario' && r.data.partner.bolsa === 900 && r.data.partner.jornada.blocos.length === 1 && r.data.partner.pctNossoPadrao === 100, r);

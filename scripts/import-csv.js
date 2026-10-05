@@ -44,11 +44,11 @@ const tempPassword = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrs
   const col = name => head.findIndex(h => h === name.toLowerCase());
   const C = {
     data: col('Data do protocolo'), numero: col('Número do processo'), cliente: col('Cliente'), parceiro: col('Parceiro'), tipo: col('Tipo de ação'),
-    hon: col('Honorários pretendidos'), lead: col('Custo do lead'), pp: col('% parceiro'), pn: col('% escritório'), rec: col('Recebido'), vrec: col('Valor recebido'),
+    hon: col('Honorários contratuais previstos') >= 0 ? col('Honorários contratuais previstos') : col('Honorários pretendidos'), lead: col('Custo do lead'), pp: col('% parceiro'), pn: col('% escritório'), rec: col('Recebido'), vrec: col('Valor recebido'),
     drec: col('Data do recebimento'), cor: col('Corretor'), ncor: col('Nome do corretor'), vcor: col('Valor do corretor'), corPago: col('Corretor pago'), obs: col('Observações')
   };
   for (const [k, v] of Object.entries(C)) if (v < 0) { console.error(`Coluna não encontrada no CSV: ${k}`); process.exit(1); }
-  const cNat = col('Natureza'), cFase = col('Fase'), cSit = col('Situação'), cVA = col('Valor da ação'), cVC = col('Valor da condenação'), cPH = col('% honorários finais') >= 0 ? col('% honorários finais') : col('% honorários (escritório)'), cBase = col('Base dos honorários'), cDeb = col('Débito cobrado'), cDev = col('Valor devido'), cRec = col('Valor reconhecido'), cHI = col('Honorários iniciais'); // opcionais (exportações antigas não têm)
+  const cNat = col('Natureza'), cFase = col('Fase'), cSit = col('Situação'), cVA = col('Valor da ação'), cVC = col('Valor total da condenação') >= 0 ? col('Valor total da condenação') : col('Valor da condenação'), cPH = col('% honorários finais') >= 0 ? col('% honorários finais') : col('% honorários (escritório)'), cBase = col('Base dos honorários'), cDeb = col('Débito cobrado'), cDev = col('Valor devido'), cRec = col('Valor reconhecido'), cHI = col('Honorários iniciais'), cSuc = col('Honorários sucumbenciais'), cPS = col('% sucumbenciais do parceiro'), cSR = col('Sucumbenciais recebidos'); // opcionais (exportações antigas não têm)
 
   const findPartner = db.prepare('SELECT id FROM partners WHERE lower(nome) = lower(?)');
   const userTaken = db.prepare('SELECT 1 FROM users WHERE usuario = ?');
@@ -81,10 +81,12 @@ const tempPassword = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrs
     const fase = cFase >= 0 && /^julg/i.test(String(r[cFase] || '')) ? 'julgado' : 'em_curso';
     const sit = cSit >= 0 ? String(r[cSit] || '').toLowerCase() : '';
     const resultado = /perdid/.test(sit) ? 'perdido' : (rec || /receb/.test(sit)) ? 'recebido' : 'em_andamento';
-    db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, natureza, fase, resultado, financeiro_status, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
+    const concluido = fase === 'julgado' || resultado === 'recebido';
+    db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, honorarios_sucumbenciais, pct_sucumb_parceiro, sucumb_recebido, natureza, fase, resultado, financeiro_status, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
       recebido, valor_recebido, data_recebimento, tem_corretor, nome_corretor, valor_corretor, corretor_pago, observacoes, criado_por, criado_em, atualizado_em)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(uuid(), pid, office ? 'escritorio' : 'parceria', cVA >= 0 && String(r[cVA] || '').trim() ? money(r[cVA]) : null, cVC >= 0 && String(r[cVC] || '').trim() ? money(r[cVC]) : null, cPH >= 0 && String(r[cPH] || '').trim() ? money(r[cPH]) : null, baseFrom(cBase >= 0 ? r[cBase] : '', office), optMoney(cDeb), optMoney(cDev), optMoney(cRec), cHI >= 0 ? money(r[cHI]) : 0, natureza, fase, resultado, resultado === 'recebido' ? 'pendente' : 'nao', numero, r[C.cliente] || '', r[C.tipo] || '', dateBR(r[C.data]) || now.slice(0, 10), money(r[C.hon]), money(r[C.lead]), office ? 0 : money(r[C.pp]), office ? 100 : money(r[C.pn]),
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(uuid(), pid, office ? 'escritorio' : 'parceria', cVA >= 0 && String(r[cVA] || '').trim() ? money(r[cVA]) : null, cVC >= 0 && String(r[cVC] || '').trim() ? money(r[cVC]) : null, cPH >= 0 && String(r[cPH] || '').trim() ? money(r[cPH]) : null, baseFrom(cBase >= 0 ? r[cBase] : '', office), optMoney(cDeb), optMoney(cDev), optMoney(cRec), cHI >= 0 ? money(r[cHI]) : 0,
+        concluido ? (optMoney(cSuc) ?? 0) : 0, office ? 0 : (optMoney(cPS) ?? 50), resultado === 'recebido' ? (optMoney(cSR) ?? 0) : 0, natureza, fase, resultado, resultado === 'recebido' ? 'pendente' : 'nao', numero, r[C.cliente] || '', r[C.tipo] || '', dateBR(r[C.data]) || now.slice(0, 10), money(r[C.hon]), money(r[C.lead]), office ? 0 : money(r[C.pp]), office ? 100 : money(r[C.pn]),
         resultado === 'recebido' ? 1 : 0, resultado === 'recebido' ? money(r[C.vrec]) : null, resultado === 'recebido' ? dateBR(r[C.drec]) : null, cor ? 1 : 0, cor ? (r[C.ncor] || '') : '', cor ? money(r[C.vcor]) : 0, cor && sim(r[C.corPago]) ? 1 : 0, r[C.obs] || '', 'importacao', now, now);
     inserted++;
   }

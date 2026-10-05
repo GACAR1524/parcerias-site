@@ -75,11 +75,20 @@ try {
   await page.click('tr[data-id]:has-text("João Pereira")');
   await page.waitForSelector('#case-form');
   await page.check('#c-fase-julg');
-  check('rótulo do valor muda para condenação', (await page.textContent('#c-hon-label')).includes('condenação'));
+  check('rótulo do valor muda para honorários contratuais (valor combinado)', (await page.textContent('#c-hon-label')).includes('contratuais'));
+  check('julgado mostra o bloco de condenação e sucumbenciais dentro de Honorários', await page.isVisible('#c-cond-home #c-cond-block') && await page.isVisible('#c-vsuc'));
   await page.check('#c-res-rec');
   await page.waitForSelector('#c-lancar');
-  check('recebido: valor e data preenchidos e opção de lançar no financeiro marcada', (await page.inputValue('#c-vrec')) === '25.000,00' && (await page.inputValue('#c-drec')) !== '' && await page.isChecked('#c-lancar'));
-  check('prévia mostra receita e repasse', /Receita.*25\.000,00/.test((await page.textContent('#fin-box')).replace(/\u00a0/g, ' ')) && /Repasse a parceiro/.test(await page.textContent('#fin-box')));
+  check('ao marcar recebido, a pergunta da condenação/sucumbenciais desce para a seção de recebimento', await page.isVisible('#c-rec-cond #c-cond-block') && /condenação/i.test(await page.textContent('#c-cond-head')));
+  check('recebido: contratuais preenchidos com os honorários, data preenchida e opção de lançar marcada', (await page.inputValue('#c-vrecc')) === '25.000,00' && (await page.inputValue('#c-vrecs')) === '' && (await page.inputValue('#c-drec')) !== '' && await page.isChecked('#c-lancar'));
+  check('divisão dos sucumbenciais na parceria vem meio a meio', (await page.inputValue('#c-psp')) === '50' && (await page.inputValue('#c-psn')) === '50');
+  await page.fill('#c-vcond', '100000'); await page.press('#c-vcond', 'Tab');
+  await page.fill('#c-vsuc', '10000'); await page.press('#c-vsuc', 'Tab'); await page.waitForTimeout(100);
+  check('condenação líquida calculada (total − sucumbenciais)', /90\.000,00/.test((await page.textContent('#c-cond-hint')).replace(/\u00a0/g, ' ')));
+  check('sucumbenciais recebidos acompanham o valor fixado', (await page.inputValue('#c-vrecs')) === '10.000,00');
+  check('total recebido = contratuais + sucumbenciais', /35\.000,00/.test((await page.textContent('#c-rec-hint')).replace(/\u00a0/g, ' ')));
+  const finBox = (await page.textContent('#fin-box')).replace(/\u00a0/g, ' ');
+  check('prévia mostra receita total e repasse (50% de 25 mil + 50% de 10 mil = 17.500)', /Receita.*35\.000,00/.test(finBox) && /Repasse a parceiro.*17\.500,00/.test(finBox));
   await page.click('#c-save');
   await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('João Pereira') && tr.textContent.includes('no financeiro')), null, { timeout: 5000 });
   const rowJoao = await page.textContent('tr[data-id]:has-text("João Pereira")');
@@ -245,16 +254,18 @@ try {
   await page.waitForSelector('#case-form', { timeout: 5000 });
   check('"Informar resultado" abre o processo', (await page.inputValue('#c-cliente')) === 'Cliente Direto');
   await page.check('#c-fase-julg'); await page.waitForTimeout(100);
-  check('julgado mostra o valor da condenação', await page.isVisible('#c-vcond-field') && /condenação/.test(await page.textContent('#c-hon-label')));
+  check('julgado mostra o valor total da condenação e os sucumbenciais', await page.isVisible('#c-vcond-field') && await page.isVisible('#c-vsuc') && /condenação/.test(await page.textContent('#c-hon-label')));
   await page.fill('#c-vcond', '50000'); await page.press('#c-vcond', 'Tab');
   check('honorários recalculados sobre a condenação (20% de 50 mil)', (await page.inputValue('#c-hon')) === '10.000,00');
+  await page.fill('#c-vsuc', '5000'); await page.press('#c-vsuc', 'Tab'); await page.waitForTimeout(100);
+  check('sucumbenciais saem da base: 20% da condenação líquida de 45 mil = 9.000', (await page.inputValue('#c-hon')) === '9.000,00' && /45\.000,00/.test((await page.textContent('#c-cond-hint')).replace(/\u00a0/g, ' ')) && /100% com o escritório/.test(await page.textContent('#c-cond-hint')));
   await page.check('#c-res-rec'); await page.waitForSelector('#c-lancar');
-  check('quanto recebemos vem preenchido com os honorários da condenação', (await page.inputValue('#c-vrec')) === '10.000,00');
-  await page.fill('#c-vrec', '9500'); await page.press('#c-vrec', 'Tab');
-  check('prévia mostra só a receita (sem repasse) com o valor efetivamente recebido', /Receita.*9\.500,00/.test((await page.textContent('#fin-box')).replace(/\u00a0/g, ' ')) && !/Repasse/.test(await page.textContent('#fin-box')));
+  check('quanto recebemos vem preenchido: 9.000 contratuais + 5.000 sucumbenciais', (await page.inputValue('#c-vrecc')) === '9.000,00' && (await page.inputValue('#c-vrecs')) === '5.000,00');
+  await page.fill('#c-vrecc', '8500'); await page.press('#c-vrecc', 'Tab');
+  check('prévia mostra só a receita (sem repasse) com o total efetivamente recebido (8.500 + 5.000)', /Receita.*13\.500,00/.test((await page.textContent('#fin-box')).replace(/\u00a0/g, ' ')) && !/Repasse/.test(await page.textContent('#fin-box')));
   await page.click('#c-save');
   await page.waitForFunction(() => !document.querySelector('#case-form') && [...document.querySelectorAll('tr[data-fin]')].some(tr => tr.textContent.includes('Cliente Direto') && tr.textContent.includes('Alvará')), null, { timeout: 8000 });
-  check('recebimento do processo do escritório entra no Financeiro como alvará de R$ 9.500', (await page.textContent('tr[data-fin]:has-text("Alvará"):has-text("Cliente Direto")')).replace(/\u00a0/g, ' ').includes('9.500,00'));
+  check('recebimento do processo do escritório entra no Financeiro como alvará de R$ 13.500', (await page.textContent('tr[data-fin]:has-text("Alvará"):has-text("Cliente Direto")')).replace(/\u00a0/g, ' ').includes('13.500,00'));
   check('processo recebido sai da caixa de provisionados (fica só o da defesa do executado)', /8 itens/.test(await page.textContent('.provbox')) && /20 mil em 1 processo/.test((await page.textContent('.provbox')).replace(/\u00a0/g, ' ')));
 
   // contratos com empresas
