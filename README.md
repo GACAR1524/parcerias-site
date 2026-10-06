@@ -15,7 +15,10 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
 - **Financeiro** mensal (receitas × despesas, lucro/prejuízo), que recebe automaticamente os
   recebimentos dos processos, as compras e recebimentos de créditos, as mensalidades dos
   contratos, os salários e bonificações dos associados; receitas parceladas ficam como
-  **créditos provisionados** até a baixa.
+  **créditos provisionados** até a baixa; **despesas recorrentes** (aluguel, energia, internet…)
+  são lançadas de uma vez para meses passados (já pagos) e futuros (**contas a pagar**, com baixa,
+  reajuste dali em diante e encerramento), e qualquer lançamento pode receber data de meses
+  anteriores para reconstruir o histórico.
 
 - **Controle de horário dos colaboradores**: advogados associados e estagiários registram entrada, volta do almoço e saída
   pelo celular; a presença é comprovada por **localização (GPS)** e pela **rede do escritório (IP)**,

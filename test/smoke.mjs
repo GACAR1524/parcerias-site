@@ -218,7 +218,21 @@ try {
     parcelas.push(r.data.id);
   }
   r = await call('a', 'POST', '/finance', { tipo: 'despesa', categoria: 'Aluguel', valor: 100, data: '2026-10-01', status: 'provisionado' });
-  check('despesa provisionada é recusada', r.status === 400, r);
+  check('despesa provisionada (conta a pagar) é aceita', r.status === 201 && r.data.entry.status === 'provisionado' && r.data.entry.vencimento === '2026-10-01', r);
+  await call('a', 'DELETE', `/finance/${r.data.id}`);
+  // despesa recorrente em lote: meses passados realizados, futuros a pagar; alteração de valor e exclusão do grupo dali em diante
+  const gR = 'grec1', lote = ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'].map((ym, i) => ({ tipo: 'despesa', categoria: 'Aluguel', descricao: `Aluguel — ${ym}`, valor: 3500, data: `${ym}-05`, vencimento: `${ym}-05`, competencia: ym, status: i < 3 ? 'realizado' : 'provisionado', grupoId: gR }));
+  r = await call('a', 'POST', '/finance/lote', { lancamentos: lote });
+  check('lote de despesa recorrente grava 6 meses de uma vez (3 pagos + 3 a pagar)', r.status === 201 && r.data.ids.length === 6 && r.data.entries.filter(e => e.status === 'realizado').length === 3 && r.data.entries.every(e => e.grupoId === gR), r);
+  r = await call('a', 'POST', '/finance/lote', { lancamentos: [{ tipo: 'despesa', categoria: 'X', valor: -1, data: '2026-01-01' }] });
+  check('lote com item inválido é recusado inteiro', r.status === 400, r);
+  r = await call('a', 'POST', `/finance/grupo/${gR}`, { acao: 'valor', valor: 3800, desde: '2026-10-05' });
+  fin = await finance();
+  check('novo valor aplicado só aos meses seguintes ainda a pagar (nov e dez)', r.status === 200 && r.data.quantidade === 2 && fin.filter(e => e.grupoId === gR && e.valor === 3800).length === 2 && fin.find(e => e.grupoId === gR && e.data === '2026-10-05').valor === 3500, fin.filter(e => e.grupoId === gR));
+  r = await call('a', 'POST', `/finance/grupo/${gR}`, { acao: 'excluir', desde: '2026-10-05' });
+  fin = await finance();
+  check('exclusão do grupo dali em diante remove só os meses a pagar seguintes', r.status === 200 && r.data.quantidade === 2 && fin.filter(e => e.grupoId === gR).length === 4, fin.filter(e => e.grupoId === gR));
+  for (const e of fin.filter(e => e.grupoId === gR)) await call('a', 'DELETE', `/finance/${e.id}`);
   r = await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', valor: 100, data: '2026-10-01', status: 'provisionado' });
   check('provisionado sem vencimento assume a data do lançamento', r.status === 201 && r.data.entry.vencimento === '2026-10-01', r);
   await call('a', 'DELETE', `/finance/${r.data.id}`);

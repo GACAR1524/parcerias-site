@@ -189,7 +189,7 @@ erDiagram
     text descricao
     real valor
     text data "data do lançamento (mês de competência)"
-    text status "realizado | provisionado (só receitas)"
+    text status "realizado | provisionado (receita a receber / despesa a pagar)"
     text vencimento "provisionado: data prevista"
     text parcela "k/N"
     text grupo_id "agrupa as parcelas de uma receita"
@@ -342,6 +342,23 @@ seção própria, como estimativa e sem check: o botão "Informar resultado" abr
 baixa acontece (Julgado → valor da condenação → Finalizado e recebido → quanto recebemos), gerando
 a receita no Financeiro. Totais, gráficos e resultado do Financeiro consideram só o realizado.
 
+**Despesas recorrentes e contas a pagar (v12).** No formulário de lançamento, a forma
+**Recorrente** (botão "+ Despesa recorrente" ou a opção dentro de "+ Despesa"/"+ Receita") gera um
+lançamento por mês entre o **primeiro** e o **último mês** informados (pode começar em meses
+passados e ir para o futuro; até 120 meses), no **dia do vencimento** escolhido (limitado ao último
+dia de cada mês), todos com o mesmo `grupo_id` (prefixo `r`), `competencia = AAAA-MM`,
+`vencimento` e a descrição "nome — mês/ano". Meses com vencimento até hoje nascem `realizado`
+(quando "meses já vencidos entram como pagos" está marcado — é o padrão, para reconstruir o
+histórico); os seguintes nascem `provisionado`. A gravação é em lote (`POST /api/finance/lote`, uma
+transação; no artifact, um documento por mês). Despesas provisionadas formam a caixa **Contas a
+pagar** (`payables()`/`openPayablesSheet()`), separada dos créditos provisionados (que agora só
+consideram receitas): baixa em lote com a data do vencimento de cada conta ou uma data única; na
+lista aparecem como "A pagar"/"Vencida". Editar um lançamento de um grupo oferece **aplicar o novo
+valor aos seguintes ainda a pagar/a receber** (reajuste) e excluir oferece **excluir também os
+seguintes** (encerra a recorrência) — ambos via `POST /api/finance/grupo/:grupoId` com `acao =
+valor | excluir` e `desde` (só atinge lançamentos `provisionado` com vencimento posterior). Um
+lançamento avulso continua podendo receber qualquer data passada: a "Data" é livre.
+
 ### Regras de cálculo (iguais nas duas versões, em `app.js`)
 
 | Grandeza | Fórmula |
@@ -353,7 +370,8 @@ a receita no Financeiro. Totais, gráficos e resultado do Financeiro consideram 
 | Honorários previstos (processo só do escritório) | `valorAcao × pctHonorarios / 100` em curso; `valorCondenacao × pctHonorarios / 100` quando julgado (editável) |
 | Provisionado de um processo em andamento | `nossaParte` = honorários previstos × `pctNosso / 100` (100 % no processo só do escritório) |
 | Parcelamento de receita | `N` parcelas mensais a partir do 1º vencimento; valor = `total / N` (centavos ajustados na última); 1ª pode nascer realizada, as demais `provisionado` |
-| Receita em atraso | `status = provisionado` e `vencimento < hoje` |
+| Receita em atraso / despesa vencida | `status = provisionado` e `vencimento < hoje` |
+| Recorrência | um lançamento por mês de `primeiro` a `último`, no dia `D` (ou último dia do mês); `vencimento ≤ hoje` → `realizado` (se "já pagos"), senão `provisionado`; mesmo `grupo_id` |
 | Mensalidade em aberto (contrato) | mês de vigência ≤ mês atual sem receita com `contractId + competencia` |
 | Lucro previsto (crédito) | `valorReceber − valorCompra` |
 | Lucro realizado (crédito) | `valorRecebido − valorCompra` (só quando recebido) |

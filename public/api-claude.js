@@ -251,6 +251,15 @@
     async createFinance(d) { const now = new Date().toISOString(); const ref = await guard(st.db.collection('finance').add({ ...d, criadoEm: now, atualizadoEm: now })); return { id: ref.id }; },
     async updateFinance(id, d) { await guard(st.db.doc('finance/' + id).update({ ...d, atualizadoEm: new Date().toISOString() })); },
     async deleteFinance(id) { await guard(st.db.doc('finance/' + id).delete()); },
+    /* Lote (despesa/receita recorrente): um documento por mês. */
+    async createFinanceMany(list) { const now = new Date().toISOString(), ids = []; for (const d of list) { const ref = await guard(st.db.collection('finance').add({ ...d, criadoEm: now, atualizadoEm: now })); ids.push(ref.id); } return { ids }; },
+    /* Grupo: altera o valor ('valor') ou exclui ('excluir') os lançamentos provisionados do grupo com vencimento depois de `desde`. */
+    async updateFinanceGroup(grupoId, acao, desde, valor) {
+      const q = await guard(st.db.collection('finance').where('grupoId', '==', grupoId).get());
+      const alvo = q.docs.filter(d => { const e = d.data(); return e.status === 'provisionado' && String(e.vencimento || e.data).slice(0, 10) > desde; });
+      for (const d of alvo) { if (acao === 'excluir') await guard(st.db.doc('finance/' + d.id).delete()); else await guard(st.db.doc('finance/' + d.id).update({ valor: Math.round(Number(valor) * 100) / 100, atualizadoEm: new Date().toISOString() })); }
+      return { quantidade: alvo.length };
+    },
 
     async exportCSV(filename, csvText) {
       if (!st.downloads) throw new Error('Exportação indisponível nesta visualização.');

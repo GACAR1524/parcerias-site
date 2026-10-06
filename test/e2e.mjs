@@ -150,6 +150,41 @@ try {
   check('clicar no mês filtra os lançamentos', (await page.textContent('#fin-entries')).includes('setembro'));
   await page.screenshot({ path: path.join(shots, 'e2e-financeiro.png'), fullPage: true });
 
+  // despesa recorrente: meses passados já pagos + meses futuros a pagar → contas a pagar → baixa → reajuste dali em diante
+  await page.selectOption('#ff-mes', ''); await page.waitForTimeout(200);
+  await page.click('[data-act="new-recorrente"]'); await page.waitForSelector('#fn-form');
+  check('"+ Despesa recorrente" abre o formulário já na forma recorrente, sem o campo de data única', await page.isChecked('#fn-pr') && await page.isVisible('#fn-rec') && !(await page.isVisible('#fn-data-field')) && /mensal/.test(await page.textContent('#fn-valor-label')));
+  await page.fill('#fn-cat', 'Internet'); await page.fill('#fn-valor', '250'); await page.fill('#fn-r1', '2026-07'); await page.fill('#fn-r2', '2026-12'); await page.fill('#fn-rd', '20');
+  await page.waitForTimeout(150);
+  const hojeISO = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const mesesRec = ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'], pagosEsp = mesesRec.filter(ym => `${ym}-20` <= hojeISO).length, aPagarEsp = 6 - pagosEsp;
+  const recHint = (await page.textContent('#fn-rec-hint')).replace(/\u00a0/g, ' ');
+  check(`resumo da recorrência: 6 meses, ${pagosEsp} já pagos e ${aPagarEsp} a pagar, total R$ 1.500`, /6 meses/.test(recHint) && (pagosEsp === 0 || new RegExp(pagosEsp + ' já pago').test(recHint)) && new RegExp(aPagarEsp + ' a pagar').test(recHint) && /1\.500,00/.test(recHint));
+  await page.click('#fn-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-fin]')].filter(tr => tr.textContent.includes('Internet')).length === 6, null, { timeout: 8000 });
+  const rowsNet = await page.$$eval('tr[data-fin]', trs => trs.filter(tr => tr.textContent.includes('Internet')).map(tr => tr.textContent));
+  check('6 meses lançados com o mês no nome; passados realizados e futuros "A pagar"', rowsNet.some(t => t.includes('Internet — julho/2026')) && rowsNet.filter(t => t.includes('A pagar')).length === aPagarEsp && rowsNet.every(t => t.includes('recorrente')));
+  check('caixa "Contas a pagar" aparece com o total dos meses futuros', aPagarEsp === 0 || ((await page.textContent('.provbox.pay')).replace(/\u00a0/g, ' ').includes('Contas a pagar') && (await page.textContent('.provbox.pay')).includes(`${aPagarEsp} despesa`)));
+  check('contas a pagar não entram nos créditos provisionados', !(await page.textContent('.provbox:not(.pay)')).includes('Internet'));
+  if (aPagarEsp >= 2) {
+    await page.click('[data-act="open-pay"]'); await page.waitForSelector('.prov-row');
+    check('lista de contas a pagar traz só os meses futuros da internet', (await page.$$('.prov-row')).length === aPagarEsp && (await page.textContent('.prov-list')).includes('Internet'));
+    await page.click('.prov-row input[data-py]'); await page.waitForTimeout(100);
+    check('botão reflete a conta marcada (R$ 250)', (await page.textContent('#py-ok')).replace(/\u00a0/g, ' ').includes('250,00') && (await page.textContent('#py-ok')).includes('(1)'));
+    await page.click('#py-ok');
+    await page.waitForFunction(n => !document.querySelector('.prov-list') && [...document.querySelectorAll('tr[data-fin]')].filter(tr => tr.textContent.includes('Internet') && tr.textContent.includes('A pagar')).length === n, aPagarEsp - 1, { timeout: 8000 });
+    check('após a baixa, a conta vira despesa realizada e sai das contas a pagar', true);
+    // reajuste: muda o valor de um mês a pagar e aplica aos seguintes
+    const alvoYm = mesesRec[6 - (aPagarEsp - 1)]; // primeiro mês ainda a pagar depois da baixa
+    await page.click(`tr[data-fin]:has-text("Internet — ${['julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'][+alvoYm.slice(5, 7) - 7]}/2026")`); await page.waitForSelector('#fn-form');
+    check('edição de lançamento recorrente a pagar oferece aplicar o novo valor aos seguintes', await page.isVisible('#fn-aplicar') && /Despesa a pagar/.test(await page.textContent('#fn-form')));
+    if (aPagarEsp - 2 > 0) {
+      await page.fill('#fn-valor', '300'); await page.check('#fn-aplicar'); await page.click('#fn-save');
+      await page.waitForFunction(n => !document.querySelector('#fn-form') && [...document.querySelectorAll('tr[data-fin]')].filter(tr => tr.textContent.includes('Internet') && tr.textContent.includes('300,00')).length === n, aPagarEsp - 1, { timeout: 8000 });
+      check('novo valor aplicado ao mês editado e aos seguintes a pagar; os já pagos continuam com R$ 250', (await page.$$eval('tr[data-fin]', trs => trs.filter(tr => tr.textContent.includes('Internet') && tr.textContent.includes('250,00')).length)) === pagosEsp + 1);
+    } else await page.click('#fn-cancel');
+  }
+
   // advogado associado
   await page.click('[data-tab="partners"]');
   await page.click('[data-act="new-associado"]');
@@ -243,7 +278,7 @@ try {
   await page.waitForFunction(() => !document.querySelector('.prov-list') && document.querySelector('.provbox') && /9 itens/.test(document.querySelector('.provbox').textContent), null, { timeout: 8000 });
   check('após a baixa restam 1 parcela, os créditos e o processo; o atraso que sobra é só do crédito', (await page.textContent('.provbox')).includes('Em atraso'));
   await page.selectOption('#ff-sit', 'provisionado'); await page.waitForTimeout(200);
-  check('filtro "só provisionados" lista só a parcela futura', (await page.$$('tr[data-fin]')).length === 1 && (await page.textContent('tr[data-fin]')).includes('4/4'));
+  check('filtro "só provisionados" lista a parcela futura (e as contas a pagar da recorrência)', (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).filter(t => /parcela/.test(t)).length === 1 && (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).every(t => /4\/4|A pagar/.test(t)));
   await page.selectOption('#ff-sit', 'realizado'); await page.waitForTimeout(200);
   check('parcelas baixadas viraram receitas realizadas', (await page.$$('tr[data-fin]:has-text("parcela 2/4")')).length === 1 && (await page.$$('tr[data-fin]:has-text("parcela 3/4")')).length === 1);
   await page.selectOption('#ff-sit', '').catch(() => {}); await page.waitForTimeout(200);

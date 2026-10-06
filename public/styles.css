@@ -288,6 +288,9 @@ input[type=radio]{accent-color:var(--gold)}
 .provbox{display:flex;justify-content:space-between;align-items:center;gap:16px;width:100%;text-align:left;font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--s3);border-radius:var(--radius);padding:12px 16px;margin-bottom:12px;cursor:pointer;flex-wrap:wrap}
 .provbox:hover{border-color:var(--gold);border-left-color:var(--s3)}
 .provbox.has-late{border-left-color:var(--warn)}
+.provbox.pay{border-left-color:var(--s2)}
+.provbox.pay:hover{border-left-color:var(--s2)}
+.provbox.pay.has-late{border-left-color:var(--bad)}
 .provbox .lbl{font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;display:block}
 .provbox .pb-main b{font-size:1.45rem;font-weight:600;display:block;margin-top:2px}
 .provbox .pb-main small,.provbox .pb-side small{display:block;color:var(--fg-2);font-size:.82rem;margin-top:2px}

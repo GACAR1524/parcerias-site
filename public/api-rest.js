@@ -21,6 +21,8 @@
  *   createPartner(d, senha) / updatePartner(id, d) / setPartnerPassword(id, senha) / setPartnerActive(id, ativo)
  *   createCredit(d) / updateCredit(id, d) / deleteCredit(id)     (compra de créditos — só administração)
  *   createFinance(d) / updateFinance(id, d) / deleteFinance(id)  (financeiro do escritório — só administração)
+ *   createFinanceMany([d...]) → { ids }   (lote: despesa/receita recorrente, um lançamento por mês)
+ *   updateFinanceGroup(grupoId, 'valor'|'excluir', desdeISO, valor?) → { quantidade }  (meses a pagar seguintes do mesmo grupo)
  *   createContract(d) / updateContract(id, d) / deleteContract(id) (contratos com empresas — só administração)
  *   punch({ tipo, lat, lng, precisao }) → { entry, avaliacao }   (associados e estagiários)
  *   requestAdjust({ data, hora, tipo, justificativa })            (associados e estagiários)
@@ -127,6 +129,8 @@
     async createFinance(d) { const r = await call('POST', '/finance', d); await reload(); return r; },
     async updateFinance(id, d) { await call('PUT', '/finance/' + encodeURIComponent(id), d); await reload(); },
     async deleteFinance(id) { await call('DELETE', '/finance/' + encodeURIComponent(id)); await reload(); },
+    async createFinanceMany(list) { const r = await call('POST', '/finance/lote', { lancamentos: list }); await reload(); return r; },
+    async updateFinanceGroup(grupoId, acao, desde, valor) { const r = await call('POST', '/finance/grupo/' + encodeURIComponent(grupoId), { acao, desde, valor }); await reload(); return r; },
 
     async createContract(d) { const r = await call('POST', '/contracts', d); await reload(); return r; },
 

@@ -234,7 +234,6 @@ function financeInput(b) {
   if (!(f.valor > 0)) fail('Informe um valor maior que zero.');
   if (f.competencia && !/^\d{4}-\d{2}$/.test(f.competencia)) fail('Competência inválida (use AAAA-MM).');
   if (f.status !== 'realizado' && f.status !== 'provisionado') fail('Situação inválida: use realizado ou provisionado.');
-  if (f.status === 'provisionado' && tipo !== 'receita') fail('Só receitas podem ser provisionadas.');
   if (f.status === 'provisionado' && !f.vencimento) f.vencimento = f.data;
   return f;
 }

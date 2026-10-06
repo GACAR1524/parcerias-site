@@ -23,6 +23,11 @@ const brlShort = n => {
 const pct = (a, b) => b > 0 ? Math.round(a / b * 100) : 0;
 const fmtDate = iso => iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10).split('-').reverse().join('/') : '—';
 const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const addDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const t = new Date(y, m - 1, d + n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
+/* Meses "AAAA-MM": soma, diferença e leitura tolerante (aceita "MM/AAAA" quando o navegador não tem campo de mês). */
+const ymAdd = (ym, k) => { const [y, m] = ym.split('-').map(Number); const t = new Date(y, m - 1 + k, 1); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; };
+const ymDiff = (a, b) => { const [ya, ma] = a.split('-').map(Number), [yb, mb] = b.split('-').map(Number); return (yb - ya) * 12 + (mb - ma); };
+const ymParse = v => { const s = String(v || '').trim(); let m = s.match(/^(\d{4})-(\d{1,2})$/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}`; m = s.match(/^(\d{1,2})\/(\d{4})$/); if (m && +m[1] >= 1 && +m[1] <= 12) return `${m[2]}-${m[1].padStart(2, '0')}`; return null; };
 const parseMoney = s => {
   if (typeof s === 'number') return s;
   s = String(s ?? '').trim().replace(/[R$\s ]/g, '');
@@ -441,6 +446,7 @@ function renderOverviewSeg() {
       </div>
     </section>
     ${provisionedBox(true)}
+    ${payablesBox(true)}
     <div class="card" style="margin-bottom:12px"><div class="card-h"><h2>Receitas por braço, mês a mês</h2><small>últimos 12 meses · valores realizados</small></div><div class="chart" id="chart-arms"></div></div>
     <div class="grid-2">
       <div class="card"><div class="card-h"><h2>Participação de cada braço</h2><small>${period === 'all' ? 'todo o período' : 'período selecionado'}</small></div>${a.total ? `<div class="barlist">${rows.map(r => `<div class="barrow"><div class="n">${ARMS[r.k]}</div><div class="v">${brl(r.v)} <small>· ${pct(r.v, a.total)}%</small></div><div class="track" style="background:color-mix(in srgb, var(--${r.cls}) 22%, transparent)" data-tip="${ARMS[r.k]}&#10;${esc(brl(r.v))} · ${pct(r.v, a.total)}% das receitas"><i style="width:${pct(r.v, a.total)}%;background:var(--${r.cls})"></i></div></div>`).join('')}</div>` : '<div class="empty"><b>Sem receitas realizadas</b>Os lançamentos do Financeiro alimentam esta visão.</div>'}</div>
@@ -1012,7 +1018,7 @@ function filteredFinance() {
 /* ---- créditos provisionados: parcelas futuras, meses de contrato em aberto e créditos comprados a receber ---- */
 function provisionedItems() {
   const today = todayISO(), ym = today.slice(0, 7), items = [];
-  for (const e of S.finance) if (isProv(e)) items.push({ kind: 'parcela', id: e.id, origem: e.descricao || e.categoria, natureza: e.categoria, valor: num(e.valor), venc: (e.vencimento || e.data).slice(0, 10), late: isLate(e), ref: e });
+  for (const e of S.finance) if (isProv(e) && e.tipo === 'receita') items.push({ kind: 'parcela', id: e.id, origem: e.descricao || e.categoria, natureza: e.categoria, valor: num(e.valor), venc: (e.vencimento || e.data).slice(0, 10), late: isLate(e), ref: e });
   for (const c of S.contracts) {
     if (c.ativo === false) continue;
     let cur = ymOf(c.dataInicio); const end = c.dataFim ? ymOf(c.dataFim) : ym;
@@ -1080,6 +1086,49 @@ function openProvisionedSheet() {
     } catch (e2) { err.textContent = writeError(e2); $('#pv-ok').disabled = false; }
   });
 }
+/* ---- contas a pagar: despesas provisionadas (recorrentes futuras ou lançadas como "a pagar") ---- */
+const payables = () => S.finance.filter(e => isProv(e) && e.tipo === 'despesa').sort((a, b) => String(a.vencimento || a.data).localeCompare(String(b.vencimento || b.data)));
+const isRecorrente = e => !!e.grupoId && !e.parcela;
+const groupNext = e => e.grupoId ? S.finance.filter(x => x.grupoId === e.grupoId && isProv(x) && String(x.vencimento || x.data).slice(0, 10) > String(e.vencimento || e.data).slice(0, 10)) : [];
+function payablesBox(compact) {
+  const items = payables(); if (!items.length) return '';
+  const total = items.reduce((s, e) => s + num(e.valor), 0), late = items.filter(isLate), lateV = late.reduce((s, e) => s + num(e.valor), 0);
+  const ym = todayISO().slice(0, 7), mes = items.filter(e => String(e.vencimento || e.data).slice(0, 7) === ym), mesV = mes.reduce((s, e) => s + num(e.valor), 0);
+  return `<button class="provbox pay ${late.length ? 'has-late' : ''}" type="button" data-act="open-pay" title="Ver contas a pagar e marcar como pagas">
+    <span class="pb-main"><span class="lbl">Contas a pagar</span><b>${brlShort(total)}</b><small>${items.length} ${items.length === 1 ? 'despesa' : 'despesas'} provisionada${items.length === 1 ? '' : 's'}${mes.length ? ` · ${brlShort(mesV)} vence${mes.length === 1 ? '' : 'm'} neste mês` : ''}${compact ? '' : ' · despesas recorrentes e lançamentos futuros'}</small></span>
+    <span class="pb-side">${late.length ? `<span class="pill warn">Vencidas: ${brlShort(lateV)}</span><small>${late.length} em atraso</small>` : '<span class="pill ok">Nada vencido</span>'}<span class="pb-cta">Ver e dar baixa →</span></span>
+  </button>`;
+}
+function openPayablesSheet() {
+  const items = payables(), total = items.reduce((s, e) => s + num(e.valor), 0), late = items.filter(isLate);
+  const rows = items.map(e => `<label class="prov-row ${isLate(e) ? 'late' : ''}" for="py-${esc(e.id)}">
+    <input type="checkbox" id="py-${esc(e.id)}" data-py="${esc(e.id)}">
+    <span class="pr-main"><b>${esc(e.descricao || e.categoria)}</b><small>${esc(e.categoria)}${isRecorrente(e) ? ' · recorrente' : e.parcela ? ' · parcela ' + esc(e.parcela) : ''}</small></span>
+    <span class="pr-side"><b>${brl(e.valor)}</b><small>${isLate(e) ? '<span class="neg">venceu em ' + fmtDate(e.vencimento || e.data) + '</span>' : 'vence em ' + fmtDate(e.vencimento || e.data)}</small></span></label>`).join('');
+  openSheet('Contas a pagar', `
+    <p class="hint">Despesas já previstas que ainda não foram pagas (recorrentes, como aluguel, ou lançadas para frente). Marque o que já pagou e confirme: cada item vira despesa realizada no Financeiro, na data informada. Para mudar valor ou excluir, clique no lançamento na lista do Financeiro.</p>
+    ${items.length ? `<div class="summary" style="margin-bottom:12px"><div><div class="lbl">Total a pagar</div><div class="v">${brl(total)}</div></div><div><div class="lbl">Vencidas</div><div class="v neg">${brl(late.reduce((s, e) => s + num(e.valor), 0))}</div></div><div><div class="lbl">Próximos 30 dias</div><div class="v">${brl(items.filter(e => { const d = String(e.vencimento || e.data).slice(0, 10); return d >= todayISO() && d <= addDays(todayISO(), 30); }).reduce((s, e) => s + num(e.valor), 0))}</div></div></div>
+    <div class="row" style="margin-bottom:8px"><div class="field"><label for="py-data">Data do pagamento <small>(aplicada aos itens marcados)</small></label><input type="date" id="py-data" value="${todayISO()}"></div><div class="field" style="justify-content:flex-end"><button class="btn btn-sm" type="button" id="py-all">Marcar todas as vencidas</button></div></div>
+    <label class="check" for="py-venc" style="margin:0 0 8px"><input type="checkbox" id="py-venc" checked><span>Usar a data de vencimento de cada conta como data do pagamento<small>desmarque para usar a data acima em todas</small></span></label>
+    <div class="prov-list">${rows}</div>
+    <p class="err" id="py-err"></p>
+    <div class="form-actions"><button class="btn" type="button" id="py-cancel">Fechar</button><button class="btn btn-primary" type="button" id="py-ok" disabled>Confirmar pagamento</button></div>`
+    : `<div class="empty"><b>Nenhuma conta a pagar</b>Despesas recorrentes (aluguel, energia, internet…) lançadas para os próximos meses aparecem aqui até você dar baixa.</div><div class="form-actions"><button class="btn" type="button" id="py-cancel">Fechar</button></div>`}`);
+  $('#py-cancel').addEventListener('click', closeSheet);
+  if (!items.length) return;
+  const sheet = $('#sheet-b');
+  const checked = () => $$('input[data-py]:checked', sheet).map(i => items.find(e => e.id === i.dataset.py)).filter(Boolean);
+  const refresh = () => { const c = checked(); $('#py-ok').disabled = !c.length; $('#py-ok').textContent = c.length ? `Confirmar pagamento de ${brl(c.reduce((s, e) => s + num(e.valor), 0))} (${c.length})` : 'Confirmar pagamento'; };
+  sheet.addEventListener('change', e => { if (e.target.matches('input[data-py]')) refresh(); });
+  $('#py-all').addEventListener('click', () => { late.forEach(e => { const i = sheet.querySelector(`input[data-py="${CSS.escape(e.id)}"]`); if (i) i.checked = true; }); refresh(); });
+  $('#py-ok').addEventListener('click', async () => {
+    const list = checked(), data = $('#py-data').value || todayISO(), useVenc = $('#py-venc').checked, err = $('#py-err'); $('#py-ok').disabled = true;
+    try {
+      for (const e of list) await api.updateFinance(e.id, { tipo: 'despesa', categoria: e.categoria, descricao: e.descricao, valor: e.valor, data: useVenc && e.vencimento ? e.vencimento.slice(0, 10) : data, observacoes: e.observacoes || '', status: 'realizado', vencimento: e.vencimento, parcela: e.parcela, grupoId: e.grupoId, caseId: e.caseId, contractId: e.contractId, competencia: e.competencia, creditId: e.creditId, associadoId: e.associadoId });
+      toast(`${list.length} pagamento${list.length === 1 ? '' : 's'} confirmado${list.length === 1 ? '' : 's'}.`); closeSheet();
+    } catch (e2) { err.textContent = writeError(e2); $('#py-ok').disabled = false; }
+  });
+}
 function categoryList(list, tipo) {
   const by = new Map();
   for (const e of list) if (e.tipo === tipo && !isProv(e)) by.set(e.categoria, (by.get(e.categoria) || 0) + num(e.valor));
@@ -1103,7 +1152,7 @@ function renderFinance() {
     <td class="num">${m.n ? signed(m.res) : '<span class="muted">—</span>'}</td><td class="num">${m.i <= lastWithData ? signed(acc) : '<span class="muted">—</span>'}</td></tr>`; }).join('');
   const entryRows = entries.map(e => `<tr data-fin="${esc(e.id)}" tabindex="0">
     <td><span class="mono">${fmtDate(e.data)}</span></td>
-    <td><span class="pill ${e.tipo === 'receita' ? 'rec' : 'desp'}">${e.tipo === 'receita' ? 'Receita' : 'Despesa'}</span>${isProv(e) ? (isLate(e) ? '<span class="pill warn" style="margin-left:4px">Em atraso</span>' : '<span class="pill wait" style="margin-left:4px">Provisionado</span>') : ''}${e.parcela ? `<span class="sub">parcela ${esc(e.parcela)}${e.vencimento ? ' · venc. ' + fmtDate(e.vencimento) : ''}</span>` : ''}</td>
+    <td><span class="pill ${e.tipo === 'receita' ? 'rec' : 'desp'}">${e.tipo === 'receita' ? 'Receita' : 'Despesa'}</span>${isProv(e) ? (isLate(e) ? `<span class="pill warn" style="margin-left:4px">${e.tipo === 'despesa' ? 'Vencida' : 'Em atraso'}</span>` : `<span class="pill wait" style="margin-left:4px">${e.tipo === 'despesa' ? 'A pagar' : 'Provisionado'}</span>`) : ''}${e.parcela ? `<span class="sub">parcela ${esc(e.parcela)}${e.vencimento ? ' · venc. ' + fmtDate(e.vencimento) : ''}</span>` : isRecorrente(e) ? `<span class="sub">recorrente${isProv(e) && e.vencimento ? ' · venc. ' + fmtDate(e.vencimento) : ''}</span>` : ''}</td>
     <td>${esc(e.categoria)}${e.caseId ? ` <span class="tag jud" title="${esc(caseTitle(e.caseId))}">PROCESSO</span>` : e.contractId ? ' <span class="tag adm" title="Mensalidade de contrato com empresa">CONTRATO</span>' : e.creditId ? ' <span class="tag" title="Compra de crédito">CRÉDITO</span>' : e.associadoId ? (isIntern(partnerById(e.associadoId)) ? ' <span class="tag" title="Estagiário">ESTAGIÁRIO</span>' : ' <span class="tag" title="Advogado associado">ASSOCIADO</span>') : ''}${e.descricao ? `<span class="sub">${esc(e.descricao)}</span>` : ''}</td>
     <td class="num ${isProv(e) ? 'muted' : ''}">${e.tipo === 'receita' ? '' : '− '}${brl(e.valor)}</td></tr>`).join('');
   return `
@@ -1111,7 +1160,7 @@ function renderFinance() {
       <div class="toolbar">
         <select id="ff-ano" data-ff="ano" aria-label="Ano">${financeYears().map(y => `<option ${y === ano ? 'selected' : ''}>${y}</option>`).join('')}</select>
         ${api.features.export ? '<button class="btn" type="button" data-act="export-finance">Exportar CSV</button>' : ''}
-        ${S.canWrite ? '<button class="btn" type="button" data-act="new-receita">+ Receita</button><button class="btn btn-primary" type="button" data-act="new-despesa">+ Despesa</button>' : ''}
+        ${S.canWrite ? '<button class="btn" type="button" data-act="new-receita">+ Receita</button><button class="btn" type="button" data-act="new-recorrente" title="Despesa que se repete todo mês (aluguel, energia, internet…), lançando meses passados e futuros de uma vez">+ Despesa recorrente</button><button class="btn btn-primary" type="button" data-act="new-despesa">+ Despesa</button>' : ''}
       </div></div>
     <section class="hero" aria-label="Resultado do ano">
       <div><div class="lbl">${t.res < 0 ? 'Prejuízo' : 'Lucro'} em ${ano}</div><div class="val ${t.res < 0 ? 'neg' : ''}">${t.res < 0 ? '−' : ''}${brlShort(Math.abs(t.res))}</div>
@@ -1124,6 +1173,7 @@ function renderFinance() {
       </div>
     </section>
     ${provisionedBox()}
+    ${payablesBox()}
     <div class="card" style="margin-bottom:12px"><div class="card-h"><h2>Receitas × despesas por mês</h2><small>${ano} · só valores realizados · a linha é o resultado do mês</small></div><div class="chart" id="chart-finance"></div></div>
     <div class="grid-2">
       <div class="card"><div class="card-h"><h2>Despesas por categoria</h2><small>${ano}</small></div>${categoryList(year, 'despesa')}</div>
@@ -1138,7 +1188,7 @@ function renderFinance() {
       <select id="ff-mes" data-ff="mes" aria-label="Mês"><option value="">Todos os meses</option>${MONTHS_FULL.map((n, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.ff.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${n}</option>`).join('')}</select>
       <select id="ff-tipo" data-ff="tipo" aria-label="Tipo"><option value="">Receitas e despesas</option><option value="receita" ${S.ff.tipo === 'receita' ? 'selected' : ''}>Só receitas</option><option value="despesa" ${S.ff.tipo === 'despesa' ? 'selected' : ''}>Só despesas</option></select>
       <select id="ff-cat" data-ff="categoria" aria-label="Categoria"><option value="">Todas as categorias</option>${cats.map(c => `<option ${S.ff.categoria === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-      <select id="ff-sit" data-ff="sit" aria-label="Situação"><option value="">Realizados e provisionados</option><option value="realizado" ${S.ff.sit === 'realizado' ? 'selected' : ''}>Só realizados</option><option value="provisionado" ${S.ff.sit === 'provisionado' ? 'selected' : ''}>Só provisionados</option><option value="atraso" ${S.ff.sit === 'atraso' ? 'selected' : ''}>Em atraso</option></select>
+      <select id="ff-sit" data-ff="sit" aria-label="Situação"><option value="">Realizados e provisionados</option><option value="realizado" ${S.ff.sit === 'realizado' ? 'selected' : ''}>Só realizados (pagos/recebidos)</option><option value="provisionado" ${S.ff.sit === 'provisionado' ? 'selected' : ''}>Só provisionados (a receber / a pagar)</option><option value="atraso" ${S.ff.sit === 'atraso' ? 'selected' : ''}>Em atraso / vencidos</option></select>
     </div>
     ${!S.loaded ? '<div class="empty"><b>Carregando…</b></div>' : entries.length ? `<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Data</th><th>Tipo</th><th>Categoria · descrição</th><th class="num">Valor</th></tr></thead><tbody>${entryRows}</tbody></table></div>` : `<div class="empty"><b>Nenhum lançamento ${year.length ? 'com esses filtros' : 'em ' + ano}</b>${year.length ? 'Ajuste os filtros.' : 'Registre receitas e despesas com os botões acima.'}</div>`}
     <div class="tfoot"><span>Clique em um lançamento para editar.</span><span>Resultado = receitas − despesas. Margem = resultado ÷ receitas.</span></div>`;
@@ -1186,17 +1236,18 @@ function openFinanceForm(e, presetTipo, prefill) {
       </div>
       <div class="row">
         <div class="field"><label for="fn-cat">Categoria</label><input type="text" id="fn-cat" list="fn-cats" value="${esc(e?.categoria || pf.categoria || '')}" placeholder="Escolha ou digite" required><datalist id="fn-cats">${catsOf(tipo).map(c => `<option value="${esc(c)}"></option>`).join('')}</datalist></div>
-        <div class="field"><label for="fn-data">Data <small>(mês de competência)</small></label><input type="date" id="fn-data" value="${esc((e?.data || defData).slice(0, 10))}" required></div>
+        <div class="field" id="fn-data-field"><label for="fn-data">Data <small>(pode ser de meses anteriores)</small></label><input type="date" id="fn-data" value="${esc((e?.data || defData).slice(0, 10))}" required></div>
       </div>
       <div class="row">
-        <div class="field"><label for="fn-valor" id="fn-valor-label">Valor ${isNew ? 'total ' : ''}<small>(R$)</small></label><input type="text" class="money" id="fn-valor" inputmode="decimal" value="${e ? moneyInput(e.valor) : pf.valor ? moneyInput(pf.valor) : ''}" placeholder="0,00" required></div>
+        <div class="field"><label for="fn-valor" id="fn-valor-label">Valor <small>(R$)</small></label><input type="text" class="money" id="fn-valor" inputmode="decimal" value="${e ? moneyInput(e.valor) : pf.valor ? moneyInput(pf.valor) : ''}" placeholder="0,00" required></div>
         <div class="field"><label for="fn-desc">Descrição <small>(opcional)</small></label><input type="text" id="fn-desc" value="${esc(e?.descricao || pf.descricao || '')}" placeholder="ex.: cliente, fornecedor, referência"></div>
       </div>
       <div class="field"><label for="fn-case">Processo relacionado <small>(opcional — ex.: honorários iniciais, custas)</small></label><select id="fn-case"><option value="">Nenhum</option>${caseOptions(e?.caseId || pf.caseId || null)}</select></div>
-      ${isNew ? `<fieldset id="fn-pay" ${tipo === 'receita' ? '' : 'hidden'}><legend>Forma de recebimento</legend>
+      ${isNew ? `<fieldset id="fn-pay"><legend id="fn-pay-legend">${tipo === 'receita' ? 'Forma de recebimento' : 'Forma de lançamento'}</legend>
         <div class="row" style="margin-bottom:10px">
-          <label class="check" for="fn-pv" style="margin:0"><input type="radio" name="fn-forma" id="fn-pv" value="vista" checked><span>À vista<small>recebido na data informada</small></span></label>
-          <label class="check" for="fn-pp" style="margin:0"><input type="radio" name="fn-forma" id="fn-pp" value="parcelado"><span>Parcelado<small>parcelas futuras ficam provisionadas</small></span></label>
+          <label class="check" for="fn-pv" style="margin:0"><input type="radio" name="fn-forma" id="fn-pv" value="vista" ${pf.forma === 'recorrente' ? '' : 'checked'}><span id="fn-pv-txt">${tipo === 'receita' ? 'À vista<small>recebido na data informada</small>' : 'Única<small>paga na data informada</small>'}</span></label>
+          <label class="check" for="fn-pp" style="margin:0" id="fn-pp-lbl" ${tipo === 'receita' ? '' : 'hidden'}><input type="radio" name="fn-forma" id="fn-pp" value="parcelado"><span>Parcelado<small>parcelas futuras ficam provisionadas</small></span></label>
+          <label class="check" for="fn-pr" style="margin:0"><input type="radio" name="fn-forma" id="fn-pr" value="recorrente" ${pf.forma === 'recorrente' ? 'checked' : ''}><span>Recorrente<small>todo mês — ex.: aluguel, energia, internet</small></span></label>
         </div>
         <div id="fn-parc" hidden>
           <div class="row">
@@ -1207,7 +1258,17 @@ function openFinanceForm(e, presetTipo, prefill) {
           <label class="check" for="fn-p1"><input type="checkbox" id="fn-p1" checked><span>1ª parcela já recebida<small>as demais entram como créditos provisionados, com vencimento mensal</small></span></label>
           <p class="hint" id="fn-parc-hint"></p>
         </div>
-      </fieldset>` : (isProv(e) ? `<div class="note">Lançamento provisionado${e.parcela ? ' (parcela ' + esc(e.parcela) + ')' : ''}${e.vencimento ? ', vencimento em ' + fmtDate(e.vencimento) : ''}. <label class="check" for="fn-realizar" style="margin:8px 0 0"><input type="checkbox" id="fn-realizar"><span>Marcar como recebido na data informada acima</span></label></div>` : '')}
+        <div id="fn-rec" hidden>
+          <div class="row">
+            <div class="field"><label for="fn-r1">Primeiro mês</label><input type="month" id="fn-r1" value="${esc(ymAdd(defData.slice(0, 7), 0))}" placeholder="AAAA-MM"></div>
+            <div class="field"><label for="fn-r2">Último mês</label><input type="month" id="fn-r2" value="${esc(defData.slice(0, 4) + '-12')}" placeholder="AAAA-MM"></div>
+            <div class="field"><label for="fn-rd">Dia do vencimento</label><input type="number" id="fn-rd" min="1" max="31" value="${+defData.slice(8, 10)}"></div>
+          </div>
+          <label class="check" for="fn-rpago"><input type="checkbox" id="fn-rpago" checked><span id="fn-rpago-txt">Meses já vencidos entram como ${tipo === 'receita' ? 'recebidos' : 'pagos'}<small>os meses anteriores a hoje viram lançamentos realizados; os próximos ficam provisionados (${tipo === 'receita' ? 'a receber' : 'a pagar'}) até você dar baixa</small></span></label>
+          <p class="hint" id="fn-rec-hint"></p>
+        </div>
+      </fieldset>` : (isProv(e) ? `<div class="note">${e.tipo === 'despesa' ? 'Despesa a pagar' : 'Lançamento provisionado'}${e.parcela ? ' (parcela ' + esc(e.parcela) + ')' : isRecorrente(e) ? ' (recorrente)' : ''}${e.vencimento ? ', vencimento em ' + fmtDate(e.vencimento) : ''}. <label class="check" for="fn-realizar" style="margin:8px 0 0"><input type="checkbox" id="fn-realizar"><span>Marcar como ${e.tipo === 'despesa' ? 'paga' : 'recebido'} na data informada acima</span></label></div>` : '')}
+      ${!isNew && e.grupoId && groupNext(e).length ? `<label class="check" for="fn-aplicar"><input type="checkbox" id="fn-aplicar"><span>Aplicar o novo valor aos ${groupNext(e).length} lançamentos seguintes deste grupo ainda ${e.tipo === 'despesa' ? 'a pagar' : 'a receber'}<small>${isRecorrente(e) ? 'útil quando o valor mensal muda (ex.: reajuste do aluguel)' : 'as parcelas futuras passam a ter este valor'}; os já ${e.tipo === 'despesa' ? 'pagos' : 'recebidos'} não mudam</small></span></label>` : ''}
       <div class="field"><label for="fn-obs">Observações</label><textarea id="fn-obs">${esc(e?.observacoes || '')}</textarea></div>
       <p class="err" id="fn-err"></p>
       <div class="form-actions">
@@ -1220,24 +1281,61 @@ function openFinanceForm(e, presetTipo, prefill) {
     </form>`, { narrow: true });
   const f = $('#fn-form'), g = id => $('#' + id, f);
   const curTipo = () => f.querySelector('input[name="fn-tipo"]:checked').value;
-  f.querySelectorAll('input[name="fn-tipo"]').forEach(r => r.addEventListener('change', () => { $('#fn-cats', f).innerHTML = catsOf(curTipo()).map(c => `<option value="${esc(c)}"></option>`).join(''); $('#sheet-title').textContent = isNew ? (curTipo() === 'receita' ? 'Nova receita' : 'Nova despesa') : 'Editar lançamento'; if (g('fn-pay')) g('fn-pay').hidden = curTipo() !== 'receita'; }));
+  f.querySelectorAll('input[name="fn-tipo"]').forEach(r => r.addEventListener('change', () => {
+    const rec = curTipo() === 'receita';
+    $('#fn-cats', f).innerHTML = catsOf(curTipo()).map(c => `<option value="${esc(c)}"></option>`).join(''); $('#sheet-title').textContent = isNew ? (rec ? 'Nova receita' : 'Nova despesa') : 'Editar lançamento';
+    if (g('fn-pay')) {
+      g('fn-pay-legend').textContent = rec ? 'Forma de recebimento' : 'Forma de lançamento';
+      g('fn-pv-txt').innerHTML = rec ? 'À vista<small>recebido na data informada</small>' : 'Única<small>paga na data informada</small>';
+      g('fn-pp-lbl').hidden = !rec; if (!rec && g('fn-pp').checked) g('fn-pv').checked = true;
+      g('fn-rpago-txt').innerHTML = `Meses já vencidos entram como ${rec ? 'recebidos' : 'pagos'}<small>os meses anteriores a hoje viram lançamentos realizados; os próximos ficam provisionados (${rec ? 'a receber' : 'a pagar'}) até você dar baixa</small>`;
+      refreshPlan();
+    }
+  }));
   $$('.money', f).forEach(i => i.addEventListener('blur', () => { if (i.value.trim()) i.value = moneyInput(parseMoney(i.value)); }));
-  const curForma = () => isNew && curTipo() === 'receita' && f.querySelector('input[name="fn-forma"]:checked')?.value === 'parcelado' ? 'parcelado' : 'vista';
+  const curForma = () => { if (!isNew) return 'vista'; const v = f.querySelector('input[name="fn-forma"]:checked')?.value; return v === 'parcelado' && curTipo() === 'receita' ? 'parcelado' : v === 'recorrente' ? 'recorrente' : 'vista'; };
   const plan = () => { const total = parseMoney(g('fn-valor').value), n = Math.max(2, Math.min(60, Math.round(num(g('fn-np')?.value) || 2))); const base = Math.floor(total / n * 100) / 100; const vals = Array.from({ length: n }, (_, i) => i === n - 1 ? round2(total - base * (n - 1)) : base); return { total, n, vals }; };
-  const refreshPlan = () => { if (!g('fn-parc')) return; const par = curForma() === 'parcelado'; g('fn-parc').hidden = !par; if (!par) return; const { n, vals } = plan(); g('fn-vp').value = moneyInput(vals[0]); const d1 = g('fn-d1').value; g('fn-parc-hint').textContent = d1 ? `${n} parcelas de ${brl(vals[0])}${vals[n - 1] !== vals[0] ? ' (última de ' + brl(vals[n - 1]) + ')' : ''}, vencendo todo dia ${+d1.slice(8, 10)} a partir de ${fmtDate(d1)}.` : 'Informe o vencimento da 1ª parcela.'; };
+  /* Recorrência: um lançamento por mês, do primeiro ao último mês, no dia do vencimento (limitado ao último dia do mês).
+     Vencimento até hoje → realizado (se "já vencidos entram como pagos"); depois de hoje → provisionado (a pagar / a receber). */
+  const recPlan = () => {
+    const a = ymParse(g('fn-r1').value), b = ymParse(g('fn-r2').value), dia = Math.max(1, Math.min(31, Math.round(num(g('fn-rd').value) || 1))), valor = parseMoney(g('fn-valor').value), pagos = g('fn-rpago').checked, hoje = todayISO();
+    if (!a || !b) return { erro: 'Informe o primeiro e o último mês (ex.: 2026-01).' };
+    const n = ymDiff(a, b) + 1;
+    if (n < 1) return { erro: 'O último mês precisa ser igual ou posterior ao primeiro.' };
+    if (n > 120) return { erro: 'No máximo 120 meses de uma vez.' };
+    const meses = Array.from({ length: n }, (_, k) => { const ym = ymAdd(a, k), [y, m] = ym.split('-'); const d = `${ym}-${String(Math.min(dia, lastDay(y, m))).padStart(2, '0')}`; return { ym, data: d, realizado: pagos && d <= hoje }; });
+    return { a, b, n, dia, valor, meses, nPagos: meses.filter(x => x.realizado).length };
+  };
+  const refreshPlan = () => {
+    if (!g('fn-parc')) return;
+    const forma = curForma(), rec = curTipo() === 'receita';
+    g('fn-parc').hidden = forma !== 'parcelado'; g('fn-rec').hidden = forma !== 'recorrente'; g('fn-data-field').hidden = forma === 'recorrente';
+    g('fn-valor-label').innerHTML = forma === 'parcelado' ? 'Valor total <small>(R$)</small>' : forma === 'recorrente' ? 'Valor mensal <small>(R$)</small>' : 'Valor <small>(R$)</small>';
+    if (forma === 'parcelado') { const { n, vals } = plan(); g('fn-vp').value = moneyInput(vals[0]); const d1 = g('fn-d1').value; g('fn-parc-hint').textContent = d1 ? `${n} parcelas de ${brl(vals[0])}${vals[n - 1] !== vals[0] ? ' (última de ' + brl(vals[n - 1]) + ')' : ''}, vencendo todo dia ${+d1.slice(8, 10)} a partir de ${fmtDate(d1)}.` : 'Informe o vencimento da 1ª parcela.'; }
+    if (forma === 'recorrente') {
+      const pl = recPlan();
+      g('fn-rec-hint').innerHTML = pl.erro ? pl.erro : `<b>${pl.n} ${pl.n === 1 ? 'mês' : 'meses'}</b> (${ymLabel(pl.a)} a ${ymLabel(pl.b)}), todo dia ${pl.dia}${pl.valor > 0 ? `, ${brl(pl.valor)} por mês — total ${brl(pl.valor * pl.n)}` : ''}: ${pl.nPagos ? `<b>${pl.nPagos}</b> já ${rec ? 'recebido' : 'pago'}${pl.nPagos === 1 ? '' : 's'}${pl.valor > 0 ? ` (${brl(pl.valor * pl.nPagos)})` : ''} e ` : ''}<b>${pl.n - pl.nPagos}</b> ${rec ? 'a receber' : 'a pagar'}${pl.valor > 0 ? ` (${brl(pl.valor * (pl.n - pl.nPagos))})` : ''}. Para prorrogar depois, cadastre outra recorrência a partir do mês seguinte.`;
+    }
+  };
   f.querySelectorAll('input[name="fn-forma"]').forEach(r => r.addEventListener('change', refreshPlan));
   f.addEventListener('input', refreshPlan); refreshPlan();
   const collect = () => ({ tipo: curTipo(), categoria: g('fn-cat').value.trim(), descricao: g('fn-desc').value.trim(), valor: parseMoney(g('fn-valor').value), data: g('fn-data').value, observacoes: g('fn-obs').value.trim(), caseId: g('fn-case').value || null });
   g('fn-case').addEventListener('change', () => { const cs = S.cases.find(x => x.id === g('fn-case').value); if (cs && !g('fn-desc').value.trim()) g('fn-desc').value = `${cs.cliente} — processo ${numFmt(cs)}`; });
   const addMonths = (iso, k) => { const [y, m, d] = iso.split('-').map(Number); const t = new Date(y, m - 1 + k, 1); const dd = Math.min(d, lastDay(t.getFullYear(), String(t.getMonth() + 1).padStart(2, '0'))); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(dd).padStart(2, '0')}`; };
   async function save(andNew) {
-    const data = collect(), err = g('fn-err');
+    const data = collect(), err = g('fn-err'), forma = curForma();
     if (!data.categoria) return err.textContent = 'Informe a categoria.';
     if (!(data.valor > 0)) return err.textContent = 'Informe um valor maior que zero.';
-    if (!data.data) return err.textContent = 'Informe a data.';
+    if (forma !== 'recorrente' && !data.data) return err.textContent = 'Informe a data.';
     err.textContent = ''; g('fn-save').disabled = true;
     try {
-      if (isNew && curForma() === 'parcelado') {
+      if (isNew && forma === 'recorrente') {
+        const pl = recPlan(); if (pl.erro) { err.textContent = pl.erro; g('fn-save').disabled = false; return; }
+        const grupoId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), nome = data.descricao || data.categoria;
+        await api.createFinanceMany(pl.meses.map(x => ({ ...data, data: x.data, status: x.realizado ? 'realizado' : 'provisionado', vencimento: x.data, competencia: x.ym, grupoId, descricao: `${nome} — ${ymLabel(x.ym)}` })));
+        const rec = data.tipo === 'receita';
+        toast(`${pl.n} meses lançados: ${pl.nPagos} ${rec ? 'recebido' : 'pago'}${pl.nPagos === 1 ? '' : 's'} e ${pl.n - pl.nPagos} ${rec ? 'a receber' : 'a pagar'}.`);
+      } else if (isNew && forma === 'parcelado') {
         const d1 = g('fn-d1').value; if (!d1) { err.textContent = 'Informe o vencimento da 1ª parcela.'; g('fn-save').disabled = false; return; }
         const { n, vals } = plan(), grupoId = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), primeira = g('fn-p1').checked;
         for (let k = 0; k < n; k++) {
@@ -1247,9 +1345,11 @@ function openFinanceForm(e, presetTipo, prefill) {
         toast(`${n} parcelas registradas: ${primeira ? '1 recebida e ' + (n - 1) : n} provisionada${(primeira ? n - 1 : n) === 1 ? '' : 's'}.`);
       } else if (isNew) { await api.createFinance(data); toast(data.tipo === 'receita' ? 'Receita registrada.' : 'Despesa registrada.'); }
       else {
-        const realizar = !!g('fn-realizar')?.checked;
+        const realizar = !!g('fn-realizar')?.checked, aplicar = !!g('fn-aplicar')?.checked;
         await api.updateFinance(e.id, { ...data, status: realizar ? 'realizado' : (e.status || 'realizado'), vencimento: e.vencimento || null, parcela: e.parcela || null, grupoId: e.grupoId || null, contractId: e.contractId || null, competencia: e.competencia || null, creditId: e.creditId || null, associadoId: e.associadoId || null });
-        toast(realizar ? 'Parcela marcada como recebida.' : 'Alterações salvas.');
+        let extra = '';
+        if (aplicar && e.grupoId) { const r = await api.updateFinanceGroup(e.grupoId, 'valor', String(e.vencimento || e.data).slice(0, 10), data.valor); extra = ` Novo valor aplicado a ${r.quantidade} lançamento${r.quantidade === 1 ? '' : 's'} seguinte${r.quantidade === 1 ? '' : 's'}.`; }
+        toast((realizar ? (e.tipo === 'despesa' ? 'Despesa marcada como paga.' : 'Parcela marcada como recebida.') : 'Alterações salvas.') + extra);
       }
       if (andNew) { const keep = { tipo: data.tipo, data: data.data }; closeSheet(); openFinanceForm(null, keep.tipo); $('#fn-data').value = keep.data; }
       else closeSheet();
@@ -1259,9 +1359,16 @@ function openFinanceForm(e, presetTipo, prefill) {
   g('fn-save-more')?.addEventListener('click', () => save(true));
   f.addEventListener('submit', ev => { ev.preventDefault(); save(false); });
   g('fn-del')?.addEventListener('click', () => {
-    g('fn-confirm').innerHTML = `<div class="confirm"><p>Excluir este lançamento de <b>${esc(brl(e.valor))}</b> (${esc(e.categoria)}, ${fmtDate(e.data)})?</p><button class="btn btn-danger btn-sm" type="button" id="fn-del-yes">Excluir</button><button class="btn btn-sm" type="button" id="fn-del-no">Manter</button></div>`;
+    const prox = e.grupoId ? groupNext(e) : [];
+    g('fn-confirm').innerHTML = `<div class="confirm"><p>Excluir este lançamento de <b>${esc(brl(e.valor))}</b> (${esc(e.categoria)}, ${fmtDate(e.data)})?</p>${prox.length ? `<label class="check" for="fn-del-grupo" style="margin:0 0 8px"><input type="checkbox" id="fn-del-grupo"><span>Excluir também os ${prox.length} lançamentos seguintes deste grupo ainda ${e.tipo === 'despesa' ? 'a pagar' : 'a receber'}<small>${isRecorrente(e) ? 'encerra a recorrência a partir daqui' : 'remove as parcelas futuras'}; os já realizados ficam</small></span></label>` : ''}<button class="btn btn-danger btn-sm" type="button" id="fn-del-yes">Excluir</button><button class="btn btn-sm" type="button" id="fn-del-no">Manter</button></div>`;
     $('#fn-del-no').addEventListener('click', () => { g('fn-confirm').innerHTML = ''; });
-    $('#fn-del-yes').addEventListener('click', async () => { try { await api.deleteFinance(e.id); toast('Lançamento excluído.'); closeSheet(); } catch (err) { g('fn-err').textContent = writeError(err); } });
+    $('#fn-del-yes').addEventListener('click', async () => {
+      try {
+        const grupo = !!$('#fn-del-grupo')?.checked;
+        if (grupo) await api.updateFinanceGroup(e.grupoId, 'excluir', String(e.vencimento || e.data).slice(0, 10));
+        await api.deleteFinance(e.id); toast(grupo ? `Lançamento e ${prox.length} seguintes excluídos.` : 'Lançamento excluído.'); closeSheet();
+      } catch (err) { g('fn-err').textContent = writeError(err); }
+    });
   });
 }
 async function exportFinanceCSV() {
@@ -1307,6 +1414,7 @@ function bindViewOnce(view) {
         case 'export-credits': return exportCreditsCSV();
         case 'new-receita': return openFinanceForm(null, 'receita');
         case 'new-despesa': return openFinanceForm(null, 'despesa');
+        case 'new-recorrente': return openFinanceForm(null, 'despesa', { forma: 'recorrente' });
         case 'export-finance': return exportFinanceCSV();
         case 'new-associado': return openPartnerForm(null, 'associado');
         case 'fp': S.fp = id || ''; return render();
@@ -1317,6 +1425,7 @@ function bindViewOnce(view) {
         case 'edit-contract': return openContractForm(S.contracts.find(x => x.id === id));
         case 'export-contracts': return exportContractsCSV();
         case 'open-prov': return openProvisionedSheet();
+        case 'open-pay': return openPayablesSheet();
         case 'post-salaries': return postSalaries(S.ff.ano + '-' + S.ff.mes);
         case 'new-estagiario': return openPartnerForm(null, 'estagiario');
         case 'go-ponto': S.tab = 'ponto'; savePref('tab', S.tab); return render();

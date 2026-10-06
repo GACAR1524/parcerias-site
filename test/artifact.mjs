@@ -107,6 +107,24 @@ try {
   await page.fill('#fn-np', '4'); await page.fill('#fn-d1', '2026-07-05'); await page.press('#fn-d1', 'Tab'); await page.waitForTimeout(100);
   await page.click('#fn-save'); await page.waitForFunction(() => !document.querySelector('#fn-form'), null, { timeout: 8000 });
   check('4 parcelas gravadas e vinculadas ao processo: 1 realizada e 3 provisionadas', await page.evaluate(() => { const cid = [...window.__mockStore.cases.entries()].find(([, c]) => c.cliente === 'Cliente Direto')[0]; const f = [...window.__mockStore.finance.values()].filter(e => e.parcela); return f.length === 4 && f.filter(e => e.status === 'provisionado').length === 3 && f.every(e => e.grupoId && e.valor === 1000 && e.caseId === cid); }));
+  // despesa recorrente no artifact (lote gravado documento a documento) → contas a pagar → reajuste dos seguintes → exclusão do grupo
+  await page.click('[data-act="new-recorrente"]'); await page.waitForSelector('#fn-form');
+  await page.fill('#fn-cat', 'Aluguel'); await page.fill('#fn-valor', '3500'); await page.fill('#fn-r1', '2026-01'); await page.fill('#fn-r2', '2026-12'); await page.fill('#fn-rd', '5'); await page.press('#fn-rd', 'Tab'); await page.waitForTimeout(100);
+  await page.click('#fn-save'); await page.waitForFunction(() => !document.querySelector('#fn-form') && document.querySelector('.provbox.pay'), null, { timeout: 8000 });
+  const hojeA = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), pagosA = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, '0')}-05`).filter(d => d <= hojeA).length;
+  check(`aluguel recorrente: 12 meses gravados, ${pagosA} pagos e ${12 - pagosA} a pagar, com competência e grupo`, await page.evaluate(n => { const f = [...window.__mockStore.finance.values()].filter(e => e.categoria === 'Aluguel'); return f.length === 12 && f.filter(e => e.status === 'realizado').length === n && f.every(e => e.grupoId && e.competencia && e.vencimento && /Aluguel — /.test(e.descricao)); }, pagosA));
+  await page.click('tr[data-fin]:has-text("Aluguel — dezembro/2026")'); await page.waitForSelector('#fn-form');
+  await page.click('#fn-del'); await page.waitForSelector('#fn-del-yes');
+  check('excluir o último mês não oferece excluir seguintes', !(await page.$('#fn-del-grupo')));
+  await page.click('#fn-del-no'); await page.click('#fn-cancel');
+  await page.click('tr[data-fin]:has-text("Aluguel — novembro/2026")'); await page.waitForSelector('#fn-form');
+  await page.fill('#fn-valor', '3800'); await page.check('#fn-aplicar'); await page.click('#fn-save');
+  await page.waitForFunction(() => !document.querySelector('#fn-form'), null, { timeout: 8000 }); await page.waitForTimeout(200);
+  check('reajuste aplicado a novembro e dezembro; os anteriores seguem R$ 3.500', await page.evaluate(() => { const f = [...window.__mockStore.finance.values()].filter(e => e.categoria === 'Aluguel'); return f.filter(e => e.valor === 3800).length === 2 && f.filter(e => e.valor === 3500).length === 10; }));
+  await page.click('tr[data-fin]:has-text("Aluguel — novembro/2026")'); await page.waitForSelector('#fn-form');
+  await page.click('#fn-del'); await page.waitForSelector('#fn-del-grupo'); await page.check('#fn-del-grupo'); await page.click('#fn-del-yes');
+  await page.waitForFunction(() => !document.querySelector('#fn-form'), null, { timeout: 8000 }); await page.waitForTimeout(200);
+  check('encerrar a recorrência exclui novembro e dezembro, mantendo os meses anteriores', await page.evaluate(() => [...window.__mockStore.finance.values()].filter(e => e.categoria === 'Aluguel').length === 10));
 
   // contrato + recebimento do mês
   await page.click('[data-tab="contracts"]'); await page.click('[data-act="new-contract"]'); await page.waitForSelector('#ct-form');
