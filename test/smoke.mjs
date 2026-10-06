@@ -232,7 +232,11 @@ try {
   r = await call('a', 'POST', `/finance/grupo/${gR}`, { acao: 'excluir', desde: '2026-10-05' });
   fin = await finance();
   check('exclusão do grupo dali em diante remove só os meses a pagar seguintes', r.status === 200 && r.data.quantidade === 2 && fin.filter(e => e.grupoId === gR).length === 4, fin.filter(e => e.grupoId === gR));
-  for (const e of fin.filter(e => e.grupoId === gR)) await call('a', 'DELETE', `/finance/${e.id}`);
+  r = await call('a', 'POST', '/finance/excluir-lote', { ids: fin.filter(e => e.grupoId === gR).map(e => e.id) });
+  fin = await finance();
+  check('exclusão em lote apaga os lançamentos informados de uma vez', r.status === 200 && r.data.quantidade === 4 && !fin.some(e => e.grupoId === gR), r);
+  r = await call('a', 'POST', '/finance/excluir-lote', { ids: [] });
+  check('exclusão em lote sem ids é recusada', r.status === 400, r);
   r = await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', valor: 100, data: '2026-10-01', status: 'provisionado' });
   check('provisionado sem vencimento assume a data do lançamento', r.status === 201 && r.data.entry.vencimento === '2026-10-01', r);
   await call('a', 'DELETE', `/finance/${r.data.id}`);
@@ -341,6 +345,10 @@ try {
   await call('a', 'DELETE', `/cases/${cidP}`);
 
   // ---- estagiários e controle de ponto ----
+  r = await call('a', 'POST', '/partners', { tipo: 'associado', nome: 'Assoc Admitido', usuario: 'assoc.adm', senha: 'senha123', areaAtuacao: 'Cível', salarioFixo: 3000, admissao: '2026-03-10' });
+  check('associado guarda a data de admissão', r.status === 201 && r.data.partner.admissao === '2026-03-10' && r.data.partner.salarioFixo === 3000, r);
+  r = await call('a', 'POST', '/partners', { tipo: 'associado', nome: 'X', usuario: 'assoc.x', senha: 'senha123', areaAtuacao: 'Cível', admissao: '10/03/2026' });
+  check('admissão em formato inválido é recusada', r.status === 400, r);
   r = await call('a', 'POST', '/partners', { tipo: 'estagiario', nome: 'Pedro Lima', usuario: 'pedro', senha: 'estagio1', curso: 'Direito', instituicao: 'UFMA', bolsa: 900, jornada: { dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00']] } });
   check('admin cadastra estagiário com bolsa e jornada da manhã', r.status === 201 && r.data.partner.tipo === 'estagiario' && r.data.partner.bolsa === 900 && r.data.partner.jornada.blocos.length === 1 && r.data.partner.pctNossoPadrao === 100, r);
   const eid = r.data.id;

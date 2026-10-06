@@ -43,6 +43,20 @@ router.post('/lote', (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/* Exclusão em lote (ex.: limpar lançamentos de uma categoria para relançar do jeito certo). */
+router.post('/excluir-lote', (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => String(x || '').slice(0, 64)).filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'Informe os lançamentos a excluir.' });
+    if (ids.length > 1000) return res.status(400).json({ error: 'No máximo 1000 lançamentos por vez.' });
+    const del = db.prepare('DELETE FROM finance_entries WHERE id = ?');
+    let n = 0;
+    db.transaction(() => { for (const id of ids) n += del.run(id).changes; })();
+    audit({ user: req.user, acao: 'excluir_lancamentos_lote', entidade: 'finance', detalhes: { quantidade: n }, ip: req.ip });
+    res.json({ ok: true, quantidade: n });
+  } catch (e) { next(e); }
+});
+
 /* Grupo (parcelas ou recorrência): altera o valor ou exclui os lançamentos ainda não realizados do mesmo grupo, a partir de uma data. */
 router.post('/grupo/:grupoId', (req, res, next) => {
   try {

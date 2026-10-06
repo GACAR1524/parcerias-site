@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS partners (
   inicio_estagio TEXT,
   fim_estagio TEXT,
   bolsa REAL NOT NULL DEFAULT 0,
+  admissao TEXT,
   jornada TEXT,
   ativo INTEGER NOT NULL DEFAULT 1,
   criado_em TEXT NOT NULL,
@@ -211,7 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_criado ON audit_log(criado_em);
 db.exec(SCHEMA);
 
 /* ---------- migrações (bancos criados por versões anteriores) ---------- */
-const CURRENT_VERSION = 11;
+const CURRENT_VERSION = 12;
 const MIGRATIONS = {
   // v2: possível data de recebimento nas compras de crédito
   2: () => {
@@ -329,6 +330,11 @@ const MIGRATIONS = {
     add('cases', 'honorarios_sucumbenciais', 'honorarios_sucumbenciais REAL NOT NULL DEFAULT 0');
     add('cases', 'pct_sucumb_parceiro', 'pct_sucumb_parceiro REAL');
     add('cases', 'sucumb_recebido', 'sucumb_recebido REAL NOT NULL DEFAULT 0');
+  },
+  // v12: data de admissão do associado (início do pagamento retroativo do salário)
+  12: () => {
+    const has = (t, c) => db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c);
+    if (!has('partners', 'admissao')) db.exec('ALTER TABLE partners ADD COLUMN admissao TEXT');
   }
 };
 const verRow = db.prepare('SELECT version FROM schema_version').get();
@@ -363,7 +369,7 @@ function partnerRow(r) {
     id: r.id, nome: r.nome, escritorio: r.escritorio || '', oab: r.oab || '', email: r.email || '', telefone: r.telefone || '',
     pctParceiroPadrao: r.pct_parceiro_padrao, pctNossoPadrao: r.pct_nosso_padrao, ativo: !!r.ativo,
     tipo: r.tipo || 'parceiro', areaAtuacao: r.area_atuacao || '', especializacao: r.especializacao || '', salarioFixo: r.salario_fixo || 0, pctBonificacaoPadrao: r.pct_bonificacao_padrao || 0, termos: r.termos || '',
-    curso: r.curso || '', instituicao: r.instituicao || '', supervisor: r.supervisor || '', inicioEstagio: r.inicio_estagio || null, fimEstagio: r.fim_estagio || null, bolsa: r.bolsa || 0,
+    curso: r.curso || '', instituicao: r.instituicao || '', supervisor: r.supervisor || '', inicioEstagio: r.inicio_estagio || null, fimEstagio: r.fim_estagio || null, bolsa: r.bolsa || 0, admissao: r.admissao || null,
     jornada: parseJSON(r.jornada),
     usuario: r.usuario || '', criadoEm: r.criado_em, atualizadoEm: r.atualizado_em
   };

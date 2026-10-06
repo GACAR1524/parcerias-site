@@ -184,6 +184,15 @@ try {
       check('novo valor aplicado ao mês editado e aos seguintes a pagar; os já pagos continuam com R$ 250', (await page.$$eval('tr[data-fin]', trs => trs.filter(tr => tr.textContent.includes('Internet') && tr.textContent.includes('250,00')).length)) === pagosEsp + 1);
     } else await page.click('#fn-cancel');
   }
+  // exclusão em lote: filtrar a categoria e apagar tudo de uma vez (para relançar do jeito certo)
+  await page.selectOption('#ff-cat', 'Internet'); await page.waitForTimeout(200);
+  check('com a categoria filtrada aparece "excluir estes N…"', (await page.$$('tr[data-fin]')).length === 6 && /excluir estes 6/.test(await page.textContent('#fin-entries')));
+  await page.click('[data-act="del-filtered"]'); await page.waitForSelector('#bd-go');
+  check('confirmação lista a categoria, o total e exige marcar a caixa', /Internet: 6 lançamentos/.test(await page.textContent('#sheet-b')) && await page.isDisabled('#bd-go'));
+  await page.check('#bd-ok'); await page.click('#bd-go');
+  await page.waitForFunction(() => !document.querySelector('#bd-go') && ![...document.querySelectorAll('tr[data-fin]')].some(tr => tr.textContent.includes('Internet')), null, { timeout: 8000 });
+  check('os 6 lançamentos da categoria foram excluídos de uma vez', true);
+  await page.selectOption('#ff-cat', ''); await page.waitForTimeout(200);
 
   // advogado associado
   await page.click('[data-tab="partners"]');
@@ -194,9 +203,11 @@ try {
   await page.fill('#p-area', 'Trabalhista'); await page.fill('#p-espec', 'Direito do Trabalho'); await page.fill('#p-sal', '4500'); await page.fill('#p-bon', '20'); await page.fill('#p-termos', 'Salário fixo + 20% sobre o êxito de cada processo');
   await page.waitForTimeout(100);
   check('cadastro do associado já vem com o salário a provisionar no Financeiro (12 meses a partir do mês atual)', await page.isVisible('#p-fin') && await page.isChecked('#p-prov') && /12 meses/.test(await page.textContent('#p-prov-hint')) && /54\.000,00/.test((await page.textContent('#p-prov-hint')).replace(/\u00a0/g, ' ')));
+  await page.fill('#p-adm', '2026-03-10'); await page.press('#p-adm', 'Tab'); await page.waitForTimeout(100);
+  check('informar a admissão faz o provisionamento começar nela (retroativo, meses vencidos como pagos)', (await page.inputValue('#p-prov-de')) === '2026-03' && /março\/2026 a/.test(await page.textContent('#p-prov-hint')) && /já vencido/.test(await page.textContent('#p-prov-hint')));
   await page.fill('#p-prov-ate', '2027-03'); await page.waitForTimeout(100);
   const hojeYm = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 7);
-  const nSal = (2027 - +hojeYm.slice(0, 4)) * 12 + (3 - +hojeYm.slice(5, 7)) + 1;
+  const nSal = 13; // março/2026 a março/2027
   check(`ajustar o "até" recalcula o plano (${nSal} meses)`, new RegExp(nSal + ' mes').test(await page.textContent('#p-prov-hint')));
   await page.click('#p-save');
   await page.waitForSelector('#cred-ok', { timeout: 5000 }); await page.click('#cred-ok');
@@ -211,7 +222,8 @@ try {
   check('mudar o salário oferece atualizar os meses a pagar', await page.isVisible('#p-prov-upd-lbl') && await page.isChecked('#p-prov-upd') && /5\.000,00/.test((await page.textContent('#p-prov-upd-txt')).replace(/\u00a0/g, ' ')));
   await page.click('#p-save'); await page.waitForFunction(() => !document.querySelector('#p-form'), null, { timeout: 5000 });
   const salCarla = await page.evaluate(async () => { const r = await fetch('/api/finance', { headers: { 'X-Requested-With': 'fetch' } }); const d = await r.json(); return d.finance.filter(e => e.categoria === 'Advogados associados (salário)' && /Carla/.test(e.descricao)); });
-  check('salários da Carla no Financeiro: competências com grupo; os a pagar passaram a R$ 5.000 e o já vencido ficou em R$ 4.500', salCarla.length === nSal && salCarla.every(e => e.grupoId && e.competencia && e.associadoId) && salCarla.filter(e => e.status === 'provisionado').every(e => e.valor === 5000) && salCarla.filter(e => e.status === 'realizado').every(e => e.valor === 4500));
+  const hojeD = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), pagosCarla = Array.from({ length: 13 }, (_, i) => { const d = new Date(2026, 2 + i, 5); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-05`; }).filter(d => d <= hojeD).length;
+  check(`salários da Carla no Financeiro: 13 competências desde a admissão (${pagosCarla} pagas), com grupo; os a pagar passaram a R$ 5.000 e os pagos ficaram em R$ 4.500`, salCarla.length === nSal && salCarla.every(e => e.grupoId && e.competencia && e.associadoId) && salCarla.filter(e => e.status === 'realizado').length === pagosCarla && salCarla.filter(e => e.status === 'provisionado').every(e => e.valor === 5000) && salCarla.filter(e => e.status === 'realizado').every(e => e.valor === 4500) && salCarla.some(e => e.competencia === '2026-03'));
   await page.click('[data-act="fp"][data-id="associado"]').catch(() => {});
   await page.waitForTimeout(150);
 

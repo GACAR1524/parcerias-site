@@ -295,8 +295,10 @@ gravação em lote). Meses com vencimento até hoje nascem `realizado`; os segui
 botão "lançar salários e bolsas" do mês, que continua existindo para quem não foi provisionado), e
 o estágio respeita `inicio_estagio`/`fim_estagio`. Para não contar em dobro com lançamentos
 globais feitos à mão (mesma categoria, sem `associado_id`), a tela avisa quando há despesa dessa
-categoria sem pessoa no período e sugere começar no mês seguinte; no cadastro novo o padrão é
-começar no mês atual, na edição no mês seguinte ao último já lançado. Ao alterar o salário/bolsa
+categoria sem pessoa no período e sugere começar no mês seguinte. "A partir de" aceita meses
+passados (retroativo — o que já venceu nasce pago): o padrão é o mês da **admissão** do associado
+(`partners.admissao`, v12) ou do início do estágio quando informados; sem isso, o mês atual no
+cadastro novo e o seguinte ao último já lançado na edição. Ao alterar o salário/bolsa
 de quem já tem meses a pagar, a tela oferece atualizar esses meses para o novo valor (os pagos não
 mudam); ao desativar a pessoa, oferece excluir os meses a pagar. "Provisionar salários e bolsas"
 na aba de parceiros faz o mesmo para todos os ativos de uma vez (pré-marcando quem não tem meses a
@@ -373,7 +375,10 @@ lista aparecem como "A pagar"/"Vencida". Editar um lançamento de um grupo ofere
 valor aos seguintes ainda a pagar/a receber** (reajuste) e excluir oferece **excluir também os
 seguintes** (encerra a recorrência) — ambos via `POST /api/finance/grupo/:grupoId` com `acao =
 valor | excluir` e `desde` (só atinge lançamentos `provisionado` com vencimento posterior). Um
-lançamento avulso continua podendo receber qualquer data passada: a "Data" é livre.
+lançamento avulso continua podendo receber qualquer data passada: a "Data" é livre. Com qualquer
+filtro ativo na lista do Financeiro, "excluir estes N…" apaga de uma vez os lançamentos filtrados
+(`POST /api/finance/excluir-lote`, com confirmação e opção de incluir os outros anos) — serve, por
+exemplo, para limpar salários lançados de forma global e relançá-los por pessoa.
 
 ### Regras de cálculo (iguais nas duas versões, em `app.js`)
 
@@ -411,7 +416,7 @@ Quando um processo passa a **Finalizado e recebido**:
 - No site a regra roda no servidor (`settleFinance`, em `routes/cases.js`, dentro da mesma transação); no artifact, no adaptador `api-claude.js`, que só consegue gravar em `finance` quando o usuário é o proprietário.
 
 Esquema versionado: `schema_version` guarda a versão atual e `db.js` aplica migrações numeradas
-ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
+ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`; v12, `partners.admissao`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
 
 ## 4. API REST
 

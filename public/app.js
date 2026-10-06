@@ -970,7 +970,10 @@ const payValue = p => isIntern(p) ? num(p.bolsa) : num(p.salarioFixo);
 /* Pagamentos (salário/bolsa) de uma pessoa já no Financeiro, e os futuros ainda a pagar. */
 const payEntries = p => S.finance.filter(e => e.associadoId === p.id && e.categoria === payCat(p)).sort((a, b) => String(a.competencia || a.data).localeCompare(String(b.competencia || b.data)));
 const payFuture = p => payEntries(p).filter(e => isProv(e) && String(e.vencimento || e.data).slice(0, 10) > todayISO());
-/* Plano de provisionamento mensal do pagamento de uma pessoa: um lançamento por mês, pulando competências já lançadas. */
+/* Mês em que a pessoa começou a ser paga: admissão (associado) ou início do estágio (estagiário); nulo se não informado. */
+const payStartYm = p => { const d = isIntern(p) ? p.inicioEstagio : p.admissao; return d ? ymOf(d) : null; };
+/* Plano de provisionamento mensal do pagamento de uma pessoa: um lançamento por mês, pulando competências já lançadas
+   e meses anteriores à admissão/início do estágio (ou posteriores ao término). Pode começar em meses passados: o que já venceu entra como pago. */
 function payPlan(p, de, ate, dia, valor) {
   if (!de || !ate) return { erro: 'Informe o primeiro e o último mês (ex.: 2026-11).' };
   const n = ymDiff(de, ate) + 1;
@@ -981,12 +984,13 @@ function payPlan(p, de, ate, dia, valor) {
   for (let k = 0; k < n; k++) {
     const ym = ymAdd(de, k), [y, m] = ym.split('-'), data = `${ym}-${String(Math.min(d, lastDay(y, m))).padStart(2, '0')}`;
     if (ja.has(ym)) { pulados.push(ym); continue; }
-    if (isIntern(p) && ((p.inicioEstagio && ymOf(p.inicioEstagio) > ym) || (p.fimEstagio && ymOf(p.fimEstagio) < ym))) { pulados.push(ym); continue; }
+    const ini = payStartYm(p);
+    if ((ini && ini > ym) || (isIntern(p) && p.fimEstagio && ymOf(p.fimEstagio) < ym)) { pulados.push(ym); continue; }
     const g = S.finance.filter(e => e.tipo === 'despesa' && e.categoria === cat && !e.associadoId && !isProv(e) && ymOf(e.competencia || e.data) === ym);
     if (g.length) globais.push({ ym, valor: g.reduce((a, e) => a + num(e.valor), 0) });
     meses.push({ ym, data, realizado: data <= hoje });
   }
-  return { n, meses, pulados, globais, nPagos: meses.filter(x => x.realizado).length, valor: num(valor) };
+  return { n, meses, pulados, globais, nPagos: meses.filter(x => x.realizado).length, valor: num(valor), inicio: meses.length ? meses[0].ym : null };
 }
 function payEntriesFor(p, plan, valor) {
   const nome = isIntern(p) ? `Bolsa de estágio — ${p.nome}` : `Salário fixo — ${p.nome}${p.areaAtuacao ? ' (' + p.areaAtuacao + ')' : ''}`;
@@ -996,6 +1000,7 @@ function pendingSalaries(ym) {
   const [y, m] = ym.split('-'), first = ym + '-01', last = `${ym}-${String(lastDay(y, m)).padStart(2, '0')}`;
   return S.partners.filter(p => isEmployee(p) && p.ativo !== false && payValue(p) > 0
     && (!p.criadoEm || p.criadoEm.slice(0, 10) <= last)
+    && (!p.admissao || p.admissao <= last)
     && (!isIntern(p) || ((!p.inicioEstagio || p.inicioEstagio <= last) && (!p.fimEstagio || p.fimEstagio >= first)))
     && !S.finance.some(e => e.associadoId === p.id && e.competencia === ym && e.categoria === payCat(p)));
 }
@@ -1028,18 +1033,20 @@ function financeMonthly(list) {
   return m;
 }
 const signed = v => `<span class="${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${v < 0 ? '−' : ''}${brl(Math.abs(v))}</span>`;
-function filteredFinance() {
+/* Filtros do Financeiro além do ano (mês, tipo, categoria, situação e busca). */
+function finPass(e) {
   const f = S.ff, q = f.q.trim().toLowerCase();
-  return financeOfYear(f.ano).filter(e => {
-    if (f.mes && String(e.data).slice(5, 7) !== f.mes) return false;
-    if (f.tipo && e.tipo !== f.tipo) return false;
-    if (f.categoria && e.categoria !== f.categoria) return false;
-    if (f.sit === 'realizado' && isProv(e)) return false;
-    if (f.sit === 'provisionado' && !isProv(e)) return false;
-    if (f.sit === 'atraso' && !isLate(e)) return false;
-    if (q && ![e.categoria, e.descricao, e.observacoes].join(' ').toLowerCase().includes(q)) return false;
-    return true;
-  }).sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+  if (f.mes && String(e.data).slice(5, 7) !== f.mes) return false;
+  if (f.tipo && e.tipo !== f.tipo) return false;
+  if (f.categoria && e.categoria !== f.categoria) return false;
+  if (f.sit === 'realizado' && isProv(e)) return false;
+  if (f.sit === 'provisionado' && !isProv(e)) return false;
+  if (f.sit === 'atraso' && !isLate(e)) return false;
+  if (q && ![e.categoria, e.descricao, e.observacoes].join(' ').toLowerCase().includes(q)) return false;
+  return true;
+}
+function filteredFinance() {
+  return financeOfYear(S.ff.ano).filter(finPass).sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
 }
 /* ---- créditos provisionados: parcelas futuras, meses de contrato em aberto e créditos comprados a receber ---- */
 function provisionedItems() {
@@ -1155,6 +1162,37 @@ function openPayablesSheet() {
     } catch (e2) { err.textContent = writeError(e2); $('#py-ok').disabled = false; }
   });
 }
+/* Exclusão em lote dos lançamentos filtrados (ex.: apagar os salários lançados de forma global para relançar por pessoa). */
+function openBulkDeleteSheet(entriesAno) {
+  if (!entriesAno.length) return;
+  const outros = S.finance.filter(e => !String(e.data || '').startsWith(S.ff.ano) && finPass(e));
+  const render = (incluirOutros) => {
+  const entries = incluirOutros ? entriesAno.concat(outros) : entriesAno;
+  const rec = entries.filter(e => e.tipo === 'receita'), desp = entries.filter(e => e.tipo === 'despesa');
+  const byCat = new Map(); for (const e of entries) byCat.set(e.categoria, (byCat.get(e.categoria) || { n: 0, v: 0 })); for (const e of entries) { const o = byCat.get(e.categoria); o.n++; o.v += num(e.valor); }
+  const vinc = entries.filter(e => e.caseId || e.creditId || e.contractId).length;
+  const filtros = [S.ff.ano, S.ff.mes ? MONTHS_FULL[+S.ff.mes - 1].toLowerCase() : '', S.ff.tipo === 'receita' ? 'só receitas' : S.ff.tipo === 'despesa' ? 'só despesas' : '', S.ff.categoria ? 'categoria “' + S.ff.categoria + '”' : '', S.ff.sit ? ({ realizado: 'só realizados', provisionado: 'só provisionados', atraso: 'em atraso' })[S.ff.sit] : '', S.ff.q ? 'busca “' + S.ff.q + '”' : ''].filter(Boolean).join(' · ');
+  const datas = entries.map(e => e.data).sort();
+  openSheet(`Excluir ${entries.length} lançamentos`, `
+    <p>Serão excluídos <b>todos os ${entries.length} lançamentos</b> que aparecem com os filtros atuais (${esc(filtros)}), de ${fmtDate(datas[0])} a ${fmtDate(datas[datas.length - 1])}. <b>Não dá para desfazer.</b></p>
+    ${outros.length ? `<label class="check" for="bd-outros"><input type="checkbox" id="bd-outros" ${incluirOutros ? 'checked' : ''}><span>Incluir também os ${outros.length} lançamentos de outros anos com os mesmos filtros<small>a lista do Financeiro mostra só ${esc(S.ff.ano)}; marque para limpar a categoria inteira</small></span></label>` : ''}
+    <div class="summary" style="margin-bottom:12px"><div><div class="lbl">Receitas</div><div class="v">${rec.length} · ${brl(rec.reduce((s, e) => s + num(e.valor), 0))}</div></div><div><div class="lbl">Despesas</div><div class="v">${desp.length} · ${brl(desp.reduce((s, e) => s + num(e.valor), 0))}</div></div></div>
+    <ul class="hint" style="margin:0 0 10px 18px;padding:0">${Array.from(byCat, ([k, o]) => `<li>${esc(k)}: ${o.n} lançamento${o.n === 1 ? '' : 's'} · ${brl(o.v)}</li>`).join('')}</ul>
+    ${vinc ? `<div class="note">${vinc} ${vinc === 1 ? 'lançamento está vinculado' : 'lançamentos estão vinculados'} a processo, crédito ou contrato. Ao excluir, o processo/crédito continua marcado como “lançado” — se quiser relançar, abra o cadastro dele e salve de novo.</div>` : ''}
+    <label class="check" for="bd-ok"><input type="checkbox" id="bd-ok"><span>Entendi: quero excluir estes ${entries.length} lançamentos definitivamente</span></label>
+    <p class="err" id="bd-err"></p>
+    <div class="form-actions"><button class="btn" type="button" id="bd-cancel">Cancelar</button><button class="btn btn-danger" type="button" id="bd-go" disabled>Excluir ${entries.length} lançamentos</button></div>`, { narrow: true });
+  $('#bd-cancel').addEventListener('click', closeSheet);
+  $('#bd-outros')?.addEventListener('change', () => render($('#bd-outros').checked));
+  $('#bd-ok').addEventListener('change', () => { $('#bd-go').disabled = !$('#bd-ok').checked; });
+  $('#bd-go').addEventListener('click', async () => {
+    $('#bd-go').disabled = true;
+    try { const r = await api.deleteFinanceMany(entries.map(e => e.id)); toast(`${r.quantidade ?? entries.length} lançamentos excluídos.`); closeSheet(); }
+    catch (err) { $('#bd-err').textContent = writeError(err); $('#bd-go').disabled = false; }
+  });
+  };
+  render(false);
+}
 function categoryList(list, tipo) {
   const by = new Map();
   for (const e of list) if (e.tipo === tipo && !isProv(e)) by.set(e.categoria, (by.get(e.categoria) || 0) + num(e.valor));
@@ -1208,7 +1246,7 @@ function renderFinance() {
     <div class="card-h"><h2>Mês a mês</h2><small>clique em um mês para ver os lançamentos</small></div>
     <div class="table-wrap" style="margin-bottom:18px"><table><thead><tr><th>Mês</th><th class="num">Receitas</th><th class="num">Despesas</th><th class="num">Resultado</th><th class="num">Acumulado</th></tr></thead><tbody>${monthRows}</tbody>
       <tfoot><tr><td><b>Total ${ano}</b></td><td class="num"><b>${brl(t.rec)}</b></td><td class="num"><b>${brl(t.desp)}</b></td><td class="num"><b>${signed(t.res)}</b></td><td></td></tr></tfoot></table></div>
-    <div class="card-h" id="fin-entries"><h2>Lançamentos${S.ff.mes ? ' de ' + MONTHS_FULL[+S.ff.mes - 1].toLowerCase() : ''}</h2><small>${entries.length} · receitas ${brl(ft.rec)} · despesas ${brl(ft.desp)}${S.ff.mes && S.canWrite && pendingSalaries(ano + '-' + S.ff.mes).length ? ` · <button class="btn-link" type="button" data-act="post-salaries">lançar salários e bolsas (${pendingSalaries(ano + '-' + S.ff.mes).length})</button>` : ''}</small></div>
+    <div class="card-h" id="fin-entries"><h2>Lançamentos${S.ff.mes ? ' de ' + MONTHS_FULL[+S.ff.mes - 1].toLowerCase() : ''}</h2><small>${entries.length} · receitas ${brl(ft.rec)} · despesas ${brl(ft.desp)}${S.ff.mes && S.canWrite && pendingSalaries(ano + '-' + S.ff.mes).length ? ` · <button class="btn-link" type="button" data-act="post-salaries">lançar salários e bolsas (${pendingSalaries(ano + '-' + S.ff.mes).length})</button>` : ''}${S.canWrite && entries.length && (S.ff.categoria || S.ff.tipo || S.ff.q || S.ff.sit || S.ff.mes) ? ` · <button class="btn-link" type="button" data-act="del-filtered" title="Excluir de uma vez todos os lançamentos que aparecem com os filtros atuais">excluir estes ${entries.length}…</button>` : ''}</small></div>
     <div class="toolbar" style="margin-bottom:12px">
       <div class="field grow"><input type="text" id="ff-q" data-ff="q" value="${esc(S.ff.q)}" placeholder="Buscar por categoria ou descrição…" aria-label="Buscar"></div>
       <select id="ff-mes" data-ff="mes" aria-label="Mês"><option value="">Todos os meses</option>${MONTHS_FULL.map((n, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${S.ff.mes === String(i + 1).padStart(2, '0') ? 'selected' : ''}>${n}</option>`).join('')}</select>
@@ -1453,6 +1491,7 @@ function bindViewOnce(view) {
         case 'export-contracts': return exportContractsCSV();
         case 'open-prov': return openProvisionedSheet();
         case 'open-pay': return openPayablesSheet();
+        case 'del-filtered': return openBulkDeleteSheet(filteredFinance());
         case 'post-salaries': return postSalaries(S.ff.ano + '-' + S.ff.mes);
         case 'new-estagiario': return openPartnerForm(null, 'estagiario');
         case 'go-ponto': S.tab = 'ponto'; savePref('tab', S.tab); return render();
@@ -1947,6 +1986,7 @@ function openPartnerForm(p, presetTipo) {
             <div class="field"><label for="p-sal">Salário fixo mensal <small>(R$)</small></label><input type="text" class="money" id="p-sal" inputmode="decimal" value="${p && isAssoc(p) ? moneyInput(p.salarioFixo) : ''}" placeholder="0,00"></div>
             <div class="field"><label for="p-bon">Bonificação padrão <small>(% dos honorários recebidos em cada processo)</small></label><input type="number" id="p-bon" min="0" max="100" step="0.5" value="${p && isAssoc(p) ? num(p.pctBonificacaoPadrao) : 10}"></div>
           </div>
+          <div class="row"><div class="field"><label for="p-adm">Início no escritório <small>(admissão — opcional; define desde quando o salário pode ser lançado)</small></label><input type="date" id="p-adm" value="${esc(p?.admissao || '')}"></div></div>
           <div class="field"><label for="p-termos">Outras condições <small>(opcional)</small></label><textarea id="p-termos" placeholder="ex.: bonificação dobrada em acordos acima de R$ 50 mil; metas; vale-transporte…">${esc(p?.termos || '')}</textarea></div>
           <p class="hint">O salário fixo vai para as despesas do Financeiro (categoria “Advogados associados (salário)”) — veja “Pagamento mensal no Financeiro” abaixo. A bonificação é calculada sobre cada processo recebido e pode ser ajustada processo a processo.</p>
         </fieldset>
@@ -1984,15 +2024,15 @@ function openPartnerForm(p, presetTipo) {
   /* Pagamento mensal no Financeiro (salário do associado / bolsa do estagiário): provisiona um lançamento por mês. */
   const admin = isAdmin();
   const curPay = () => curTipo() === 'estagiario' ? parseMoney(g('p-bolsa').value) : parseMoney(g('p-sal').value);
-  const fakeP = () => ({ id: p?.id || '_novo', nome: g('p-nome').value.trim() || 'nome', tipo: curTipo(), areaAtuacao: g('p-area').value.trim(), inicioEstagio: curTipo() === 'estagiario' ? g('p-ini').value || null : null, fimEstagio: curTipo() === 'estagiario' ? g('p-fim').value || null : null });
+  const fakeP = () => ({ id: p?.id || '_novo', nome: g('p-nome').value.trim() || 'nome', tipo: curTipo(), areaAtuacao: g('p-area').value.trim(), inicioEstagio: curTipo() === 'estagiario' ? g('p-ini').value || null : null, fimEstagio: curTipo() === 'estagiario' ? g('p-fim').value || null : null, admissao: curTipo() === 'associado' ? g('p-adm').value || null : null });
+  /* "A partir de": o mês da admissão/início do estágio quando informado (retroativo), senão o mês atual (cadastro novo) ou o seguinte ao último já lançado. */
   const provDefaults = () => {
-    const fp = fakeP(), ents = p ? payEntries(p) : [], hoje = todayISO().slice(0, 7);
-    let de = isNew ? hoje : ymAdd(hoje, 1);
+    const fp = fakeP(), ents = p ? payEntries(p) : [], hoje = todayISO().slice(0, 7), ini = payStartYm(fp);
+    let de = ini || (isNew ? hoje : ymAdd(hoje, 1));
     if (ents.length) { const ult = ents[ents.length - 1].competencia || ymOf(ents[ents.length - 1].data); if (ult >= de) de = ymAdd(ult, 1); }
-    if (fp.inicioEstagio && ymOf(fp.inicioEstagio) > de) de = ymOf(fp.inicioEstagio);
-    let ate = fp.fimEstagio ? ymOf(fp.fimEstagio) : ymAdd(de, 11);
+    let ate = fp.fimEstagio ? ymOf(fp.fimEstagio) : ymAdd(hoje > de ? hoje : de, 11);
     if (ate < de) ate = de;
-    if (!g('p-prov-de').dataset.touched) g('p-prov-de').value = de;
+    if (!g('p-prov-de').dataset.touched || g('p-prov-de').dataset.ini !== (ini || '')) { g('p-prov-de').value = de; g('p-prov-de').dataset.ini = ini || ''; }
     if (!g('p-prov-ate').dataset.touched) g('p-prov-ate').value = ate;
   };
   const refreshProv = () => {
@@ -2002,7 +2042,7 @@ function openPartnerForm(p, presetTipo) {
     g('p-prov-txt').innerHTML = `Provisionar ${est ? 'a bolsa' : 'o salário'} mensal nas despesas<small>um lançamento por mês na categoria “${payCat(fp)}”, vinculado à pessoa; os meses futuros ficam em “Contas a pagar” até a baixa</small>`;
     // situação atual no Financeiro
     const ents = p ? payEntries(p) : [], pagos = ents.filter(e => !isProv(e)), fut = p ? payFuture(p) : [];
-    g('p-fin-status').innerHTML = !p ? '' : ents.length ? `No Financeiro: <b>${pagos.length}</b> ${pagos.length === 1 ? 'mês pago' : 'meses pagos'}${pagos.length ? ` (${ymLabel(pagos[0].competencia || ymOf(pagos[0].data))} a ${ymLabel(pagos[pagos.length - 1].competencia || ymOf(pagos[pagos.length - 1].data))})` : ''} e <b>${fut.length}</b> a pagar${fut.length ? ` (até ${ymLabel(fut[fut.length - 1].competencia || ymOf(fut[fut.length - 1].data))}, ${brl(fut[fut.length - 1].valor)} por mês)` : ''}.` : 'Nenhum pagamento desta pessoa lançado no Financeiro ainda (se você lançou os salários de forma global, comece a provisionar no mês seguinte ao último já lançado).';
+    g('p-fin-status').innerHTML = (!p ? '' : ents.length ? `No Financeiro: <b>${pagos.length}</b> ${pagos.length === 1 ? 'mês pago' : 'meses pagos'}${pagos.length ? ` (${ymLabel(pagos[0].competencia || ymOf(pagos[0].data))} a ${ymLabel(pagos[pagos.length - 1].competencia || ymOf(pagos[pagos.length - 1].data))})` : ''} e <b>${fut.length}</b> a pagar${fut.length ? ` (até ${ymLabel(fut[fut.length - 1].competencia || ymOf(fut[fut.length - 1].data))}, ${brl(fut[fut.length - 1].valor)} por mês)` : ''}.` : 'Nenhum pagamento desta pessoa lançado no Financeiro ainda.') + ` <span class="muted">“A partir de” pode ser um mês passado (ex.: 2026-01): os meses já vencidos entram como pagos, para registrar o histórico${est ? '' : ' — informe a admissão acima e ele começa nela'}.</span>`;
     // atualizar os meses futuros já provisionados quando o valor muda
     const atual = p ? payValue(p) : 0, mudou = p && fut.length && Math.abs(valor - atual) > 0.005 && valor > 0;
     g('p-prov-upd-lbl').hidden = !mudou;
@@ -2060,7 +2100,7 @@ function openPartnerForm(p, presetTipo) {
     if (ini && fim && fim < ini) return err.textContent = 'O término do estágio não pode ser anterior ao início.';
     const data = { tipo, nome, oab: est ? '' : g('p-oab').value.trim(), escritorio: assoc || est ? '' : g('p-esc').value.trim(), email: g('p-email').value.trim(), telefone: g('p-tel').value.trim(), usuario, pctParceiroPadrao: pp, pctNossoPadrao: pn,
       areaAtuacao: assoc ? g('p-area').value.trim() : '', especializacao: assoc ? g('p-espec').value.trim() : '', salarioFixo: assoc ? parseMoney(g('p-sal').value) : 0, pctBonificacaoPadrao: assoc ? bon : 0, termos: assoc ? g('p-termos').value.trim() : '',
-      curso: est ? g('p-curso').value.trim() : '', instituicao: est ? g('p-inst').value.trim() : '', supervisor: est ? g('p-sup').value.trim() : '', bolsa: est ? parseMoney(g('p-bolsa').value) : 0, inicioEstagio: ini || null, fimEstagio: fim || null, jornada };
+      curso: est ? g('p-curso').value.trim() : '', instituicao: est ? g('p-inst').value.trim() : '', supervisor: est ? g('p-sup').value.trim() : '', bolsa: est ? parseMoney(g('p-bolsa').value) : 0, inicioEstagio: ini || null, fimEstagio: fim || null, admissao: assoc ? g('p-adm').value || null : null, jornada };
     // provisionamento do pagamento mensal (associado/estagiário)
     const emp = assoc || est, valorPag = est ? data.bolsa : data.salarioFixo;
     const querProv = emp && admin && g('p-prov').checked && valorPag > 0;
@@ -2125,7 +2165,7 @@ function openPayrollSheet() {
   const people = S.partners.filter(p => isEmployee(p) && p.ativo !== false && payValue(p) > 0).sort((a, b) => (isIntern(a) - isIntern(b)) || (a.nome || '').localeCompare(b.nome || ''));
   const hoje = todayISO().slice(0, 7);
   openSheet('Provisionar salários e bolsas', `
-    <p class="hint">Lança nas despesas, mês a mês, o salário de cada associado e a bolsa de cada estagiário, vinculados à pessoa. Meses futuros ficam em <b>Contas a pagar</b> até a baixa; meses já vencidos entram como pagos. Competências que a pessoa já tem lançadas são puladas, então pode repetir sem duplicar.</p>
+    <p class="hint">Lança nas despesas, mês a mês, o salário de cada associado e a bolsa de cada estagiário, vinculados à pessoa. <b>Para registrar o histórico, coloque um mês passado em “A partir de”</b> (ex.: 2026-01): os meses já vencidos entram como pagos e os futuros ficam em <b>Contas a pagar</b> até a baixa. Quem tem admissão ou início do estágio informado começa nessa data. Competências que a pessoa já tem lançadas são puladas, então pode repetir sem duplicar.</p>
     <div class="row">
       <div class="field"><label for="pr-de">A partir de</label><input type="month" id="pr-de" value="${ymAdd(hoje, 1)}" placeholder="AAAA-MM"></div>
       <div class="field"><label for="pr-ate">Até</label><input type="month" id="pr-ate" value="${ymAdd(hoje, 12)}" placeholder="AAAA-MM"></div>
@@ -2148,8 +2188,8 @@ function openPayrollSheet() {
       (pl.globais || []).forEach(x => globais.set(x.ym, x.valor));
       const sel = first ? !fut.length : checkedIds.has(p.id);
       return `<label class="prov-row" for="pr-${esc(p.id)}"><input type="checkbox" id="pr-${esc(p.id)}" data-pr="${esc(p.id)}" ${sel ? 'checked' : ''} ${n ? '' : 'disabled'}>
-        <span class="pr-main"><b>${esc(p.nome)}</b><small>${isIntern(p) ? 'estagiário · bolsa' : 'associado · salário'} ${brl(payValue(p))}/mês · ${fut.length ? `já tem ${fut.length} ${fut.length === 1 ? 'mês' : 'meses'} a pagar (até ${ymLabel(fut[fut.length - 1].competencia || ymOf(fut[fut.length - 1].data))})` : 'nenhum mês provisionado'}</small></span>
-        <span class="pr-side"><b>${pl.erro ? '—' : brl(payValue(p) * n)}</b><small>${pl.erro ? esc(pl.erro) : n ? `${n} ${n === 1 ? 'mês' : 'meses'}${pl.nPagos ? ` (${pl.nPagos} como pagos)` : ''}${pl.pulados.length ? ` · ${pl.pulados.length} já lançados` : ''}` : 'nada a lançar neste período'}</small></span></label>`;
+        <span class="pr-main"><b>${esc(p.nome)}</b><small>${isIntern(p) ? 'estagiário · bolsa' : 'associado · salário'} ${brl(payValue(p))}/mês${payStartYm(p) ? ` · ${isIntern(p) ? 'estágio desde' : 'admissão em'} ${ymLabel(payStartYm(p))}` : ''} · ${fut.length ? `já tem ${fut.length} ${fut.length === 1 ? 'mês' : 'meses'} a pagar (até ${ymLabel(fut[fut.length - 1].competencia || ymOf(fut[fut.length - 1].data))})` : 'nenhum mês provisionado'}</small></span>
+        <span class="pr-side"><b>${pl.erro ? '—' : brl(payValue(p) * n)}</b><small>${pl.erro ? esc(pl.erro) : n ? `${n} ${n === 1 ? 'mês' : 'meses'}${pl.inicio && pl.inicio !== de ? ` a partir de ${ymLabel(pl.inicio)}` : ''}${pl.nPagos ? ` (${pl.nPagos} como pagos)` : ''}${pl.pulados.length ? ` · ${pl.pulados.length} pulados` : ''}` : 'nada a lançar neste período'}</small></span></label>`;
     }).join('');
     const g = Array.from(globais.entries()).sort();
     $('#pr-aviso').innerHTML = g.length ? `<span class="bad">Atenção:</span> em ${g.map(([ym]) => ymLabel(ym)).join(', ')} já existem despesas de salário/bolsa sem pessoa vinculada (lançamento global de ${g.map(([, v]) => brl(v)).join(', ')}). Se esses meses já cobrem o pagamento de todos, comece em ${ymLabel(ymAdd(g[g.length - 1][0], 1))} para não contar em dobro.` : '';

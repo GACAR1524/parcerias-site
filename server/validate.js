@@ -135,6 +135,7 @@ function partnerInput(b) {
     curso: est ? str(b.curso, 160) : '', instituicao: est ? str(b.instituicao, 160) : '', supervisor: est ? str(b.supervisor, 160) : '',
     inicioEstagio: est && b.inicioEstagio ? dateISO(b.inicioEstagio, 'início do estágio') : null, fimEstagio: est && b.fimEstagio ? dateISO(b.fimEstagio, 'término do estágio') : null,
     bolsa: est ? money(b.bolsa ?? 0) : 0,
+    admissao: ass && b.admissao ? dateISO(b.admissao, 'data de admissão') : null,
     jornada: ass || est ? jornadaInput(b.jornada, tipo) : null
   };
   if (!p.nome) fail(est ? 'Informe o nome do estagiário.' : 'Informe o nome do advogado.');

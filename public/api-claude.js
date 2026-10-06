@@ -253,6 +253,7 @@
     async deleteFinance(id) { await guard(st.db.doc('finance/' + id).delete()); },
     /* Lote (despesa/receita recorrente): um documento por mês. */
     async createFinanceMany(list) { const now = new Date().toISOString(), ids = []; for (const d of list) { const ref = await guard(st.db.collection('finance').add({ ...d, criadoEm: now, atualizadoEm: now })); ids.push(ref.id); } return { ids }; },
+    async deleteFinanceMany(ids) { for (const id of ids) await guard(st.db.doc('finance/' + id).delete()); return { quantidade: ids.length }; },
     /* Grupo: altera o valor ('valor') ou exclui ('excluir') os lançamentos provisionados do grupo com vencimento depois de `desde`. */
     async updateFinanceGroup(grupoId, acao, desde, valor) {
       const q = await guard(st.db.collection('finance').where('grupoId', '==', grupoId).get());

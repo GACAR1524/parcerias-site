@@ -18,8 +18,8 @@ router.post('/', async (req, res, next) => {
     if (userTaken.get(p.usuario)) return res.status(400).json({ error: 'Já existe um usuário com este login.' });
     const now = nowISO(), id = uuid(), uid = uuid(), senhaHash = await hash(senha);
     db.transaction(() => {
-      db.prepare('INSERT INTO partners (id, nome, escritorio, oab, email, telefone, pct_parceiro_padrao, pct_nosso_padrao, tipo, area_atuacao, especializacao, salario_fixo, pct_bonificacao_padrao, termos, curso, instituicao, supervisor, inicio_estagio, fim_estagio, bolsa, jornada, ativo, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)')
-        .run(id, p.nome, p.escritorio, p.oab, p.email, p.telefone, p.pctParceiroPadrao, p.pctNossoPadrao, p.tipo, p.areaAtuacao, p.especializacao, p.salarioFixo, p.pctBonificacaoPadrao, p.termos, p.curso, p.instituicao, p.supervisor, p.inicioEstagio, p.fimEstagio, p.bolsa, p.jornada ? JSON.stringify(p.jornada) : null, now, now);
+      db.prepare('INSERT INTO partners (id, nome, escritorio, oab, email, telefone, pct_parceiro_padrao, pct_nosso_padrao, tipo, area_atuacao, especializacao, salario_fixo, pct_bonificacao_padrao, termos, curso, instituicao, supervisor, inicio_estagio, fim_estagio, bolsa, admissao, jornada, ativo, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)')
+        .run(id, p.nome, p.escritorio, p.oab, p.email, p.telefone, p.pctParceiroPadrao, p.pctNossoPadrao, p.tipo, p.areaAtuacao, p.especializacao, p.salarioFixo, p.pctBonificacaoPadrao, p.termos, p.curso, p.instituicao, p.supervisor, p.inicioEstagio, p.fimEstagio, p.bolsa, p.admissao, p.jornada ? JSON.stringify(p.jornada) : null, now, now);
       db.prepare('INSERT INTO users (id, usuario, senha_hash, role, partner_id, ativo, criado_em, atualizado_em) VALUES (?,?,?,?,?,1,?,?)')
         .run(uid, p.usuario, senhaHash, 'partner', id, now, now);
     })();
@@ -37,8 +37,8 @@ router.put('/:id', (req, res, next) => {
     if (taken && taken.partner_id !== cur.id) return res.status(400).json({ error: 'Já existe um usuário com este login.' });
     const now = nowISO();
     db.transaction(() => {
-      db.prepare('UPDATE partners SET nome=?, escritorio=?, oab=?, email=?, telefone=?, pct_parceiro_padrao=?, pct_nosso_padrao=?, tipo=?, area_atuacao=?, especializacao=?, salario_fixo=?, pct_bonificacao_padrao=?, termos=?, curso=?, instituicao=?, supervisor=?, inicio_estagio=?, fim_estagio=?, bolsa=?, jornada=?, atualizado_em=? WHERE id=?')
-        .run(p.nome, p.escritorio, p.oab, p.email, p.telefone, p.pctParceiroPadrao, p.pctNossoPadrao, p.tipo, p.areaAtuacao, p.especializacao, p.salarioFixo, p.pctBonificacaoPadrao, p.termos, p.curso, p.instituicao, p.supervisor, p.inicioEstagio, p.fimEstagio, p.bolsa, p.jornada ? JSON.stringify(p.jornada) : null, now, cur.id);
+      db.prepare('UPDATE partners SET nome=?, escritorio=?, oab=?, email=?, telefone=?, pct_parceiro_padrao=?, pct_nosso_padrao=?, tipo=?, area_atuacao=?, especializacao=?, salario_fixo=?, pct_bonificacao_padrao=?, termos=?, curso=?, instituicao=?, supervisor=?, inicio_estagio=?, fim_estagio=?, bolsa=?, admissao=?, jornada=?, atualizado_em=? WHERE id=?')
+        .run(p.nome, p.escritorio, p.oab, p.email, p.telefone, p.pctParceiroPadrao, p.pctNossoPadrao, p.tipo, p.areaAtuacao, p.especializacao, p.salarioFixo, p.pctBonificacaoPadrao, p.termos, p.curso, p.instituicao, p.supervisor, p.inicioEstagio, p.fimEstagio, p.bolsa, p.admissao, p.jornada ? JSON.stringify(p.jornada) : null, now, cur.id);
       db.prepare('UPDATE users SET usuario=?, atualizado_em=? WHERE partner_id=?').run(p.usuario, now, cur.id);
     })();
     audit({ user: req.user, acao: 'editar_parceiro', entidade: 'partner', entidadeId: cur.id, ip: req.ip });

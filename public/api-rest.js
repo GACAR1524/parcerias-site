@@ -22,6 +22,7 @@
  *   createCredit(d) / updateCredit(id, d) / deleteCredit(id)     (compra de créditos — só administração)
  *   createFinance(d) / updateFinance(id, d) / deleteFinance(id)  (financeiro do escritório — só administração)
  *   createFinanceMany([d...]) → { ids }   (lote: despesa/receita recorrente, um lançamento por mês)
+ *   deleteFinanceMany([id...]) → { quantidade }   (exclusão em lote dos lançamentos filtrados)
  *   updateFinanceGroup(grupoId, 'valor'|'excluir', desdeISO, valor?) → { quantidade }  (meses a pagar seguintes do mesmo grupo)
  *   createContract(d) / updateContract(id, d) / deleteContract(id) (contratos com empresas — só administração)
  *   punch({ tipo, lat, lng, precisao }) → { entry, avaliacao }   (associados e estagiários)
@@ -130,6 +131,7 @@
     async updateFinance(id, d) { await call('PUT', '/finance/' + encodeURIComponent(id), d); await reload(); },
     async deleteFinance(id) { await call('DELETE', '/finance/' + encodeURIComponent(id)); await reload(); },
     async createFinanceMany(list) { const ids = []; for (let i = 0; i < list.length; i += 100) { const r = await call('POST', '/finance/lote', { lancamentos: list.slice(i, i + 100) }); ids.push(...(r.ids || [])); } await reload(); return { ids }; },
+    async deleteFinanceMany(ids) { let n = 0; for (let i = 0; i < ids.length; i += 500) { const r = await call('POST', '/finance/excluir-lote', { ids: ids.slice(i, i + 500) }); n += r.quantidade || 0; } await reload(); return { quantidade: n }; },
     async updateFinanceGroup(grupoId, acao, desde, valor) { const r = await call('POST', '/finance/grupo/' + encodeURIComponent(grupoId), { acao, desde, valor }); await reload(); return r; },
 
     async createContract(d) { const r = await call('POST', '/contracts', d); await reload(); return r; },
