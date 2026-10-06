@@ -129,7 +129,7 @@
     async createFinance(d) { const r = await call('POST', '/finance', d); await reload(); return r; },
     async updateFinance(id, d) { await call('PUT', '/finance/' + encodeURIComponent(id), d); await reload(); },
     async deleteFinance(id) { await call('DELETE', '/finance/' + encodeURIComponent(id)); await reload(); },
-    async createFinanceMany(list) { const r = await call('POST', '/finance/lote', { lancamentos: list }); await reload(); return r; },
+    async createFinanceMany(list) { const ids = []; for (let i = 0; i < list.length; i += 100) { const r = await call('POST', '/finance/lote', { lancamentos: list.slice(i, i + 100) }); ids.push(...(r.ids || [])); } await reload(); return { ids }; },
     async updateFinanceGroup(grupoId, acao, desde, valor) { const r = await call('POST', '/finance/grupo/' + encodeURIComponent(grupoId), { acao, desde, valor }); await reload(); return r; },
 
     async createContract(d) { const r = await call('POST', '/contracts', d); await reload(); return r; },

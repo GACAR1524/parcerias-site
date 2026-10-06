@@ -192,11 +192,26 @@ try {
   check('formulário abre já como associado, com área e termos', await page.isChecked('#p-t-ass') && await page.isVisible('#p-area') && await page.isVisible('#p-termos') && !(await page.isVisible('#p-split')));
   await page.fill('#p-nome', 'Carla Nunes'); await page.press('#p-nome', 'Tab');
   await page.fill('#p-area', 'Trabalhista'); await page.fill('#p-espec', 'Direito do Trabalho'); await page.fill('#p-sal', '4500'); await page.fill('#p-bon', '20'); await page.fill('#p-termos', 'Salário fixo + 20% sobre o êxito de cada processo');
+  await page.waitForTimeout(100);
+  check('cadastro do associado já vem com o salário a provisionar no Financeiro (12 meses a partir do mês atual)', await page.isVisible('#p-fin') && await page.isChecked('#p-prov') && /12 meses/.test(await page.textContent('#p-prov-hint')) && /54\.000,00/.test((await page.textContent('#p-prov-hint')).replace(/\u00a0/g, ' ')));
+  await page.fill('#p-prov-ate', '2027-03'); await page.waitForTimeout(100);
+  const hojeYm = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 7);
+  const nSal = (2027 - +hojeYm.slice(0, 4)) * 12 + (3 - +hojeYm.slice(5, 7)) + 1;
+  check(`ajustar o "até" recalcula o plano (${nSal} meses)`, new RegExp(nSal + ' mes').test(await page.textContent('#p-prov-hint')));
   await page.click('#p-save');
   await page.waitForSelector('#cred-ok', { timeout: 5000 }); await page.click('#cred-ok');
   await page.waitForFunction(() => [...document.querySelectorAll('.pcard')].some(c => c.textContent.includes('Carla Nunes')), null, { timeout: 5000 });
   const cardCarla = await page.textContent('.pcard:has-text("Carla Nunes")');
   check('cartão do associado mostra o tipo com a área de atuação', /associado/i.test(cardCarla) && /Trabalhista/.test(cardCarla));
+  check('cartão mostra os meses de salário a pagar no Financeiro', /Financeiro: \d+ mes(es)? a pagar, até março\/2027/.test(cardCarla));
+  // reajuste: editar o salário atualiza os meses a pagar já provisionados
+  await page.click('.pcard:has-text("Carla Nunes") [data-act="edit-partner"]'); await page.waitForSelector('#p-form');
+  check('edição mostra a situação no Financeiro e não provisiona de novo por padrão', /a pagar/.test(await page.textContent('#p-fin-status')) && !(await page.isChecked('#p-prov')));
+  await page.fill('#p-sal', '5000'); await page.press('#p-sal', 'Tab'); await page.waitForTimeout(100);
+  check('mudar o salário oferece atualizar os meses a pagar', await page.isVisible('#p-prov-upd-lbl') && await page.isChecked('#p-prov-upd') && /5\.000,00/.test((await page.textContent('#p-prov-upd-txt')).replace(/\u00a0/g, ' ')));
+  await page.click('#p-save'); await page.waitForFunction(() => !document.querySelector('#p-form'), null, { timeout: 5000 });
+  const salCarla = await page.evaluate(async () => { const r = await fetch('/api/finance', { headers: { 'X-Requested-With': 'fetch' } }); const d = await r.json(); return d.finance.filter(e => e.categoria === 'Advogados associados (salário)' && /Carla/.test(e.descricao)); });
+  check('salários da Carla no Financeiro: competências com grupo; os a pagar passaram a R$ 5.000 e o já vencido ficou em R$ 4.500', salCarla.length === nSal && salCarla.every(e => e.grupoId && e.competencia && e.associadoId) && salCarla.filter(e => e.status === 'provisionado').every(e => e.valor === 5000) && salCarla.filter(e => e.status === 'realizado').every(e => e.valor === 4500));
   await page.click('[data-act="fp"][data-id="associado"]').catch(() => {});
   await page.waitForTimeout(150);
 
@@ -389,6 +404,7 @@ try {
   await pg.fill('#p-nome', 'Pedro Lima'); await pg.press('#p-nome', 'Tab');
   await pg.fill('#p-curso', 'Direito'); await pg.fill('#p-bolsa', '900');
   const senhaEst = await pg.inputValue('#p-pass');
+  await pg.uncheck('#p-prov'); // este estagiário fica para o botão "lançar salários e bolsas" do mês
   await pg.click('#p-save'); await pg.waitForSelector('#cred-ok', { timeout: 5000 }); await pg.click('#cred-ok');
   await pg.waitForFunction(() => [...document.querySelectorAll('.pcard')].some(c => c.textContent.includes('Pedro Lima')), null, { timeout: 5000 });
   check('cartão do estagiário mostra bolsa e jornada', /Estagiário/.test(await pg.textContent('.pcard:has-text("Pedro Lima")')) && /08:00–12:00/.test(await pg.textContent('.pcard:has-text("Pedro Lima")')));
@@ -459,6 +475,19 @@ try {
   await pg.click('[data-act="post-salaries"]');
   await pg.waitForFunction(() => [...document.querySelectorAll('tr[data-fin]')].some(tr => tr.textContent.includes('Bolsa de estágio')), null, { timeout: 8000 });
   check('bolsa do estagiário lançada como despesa "Estagiários (bolsa)"', /Estagiários \(bolsa\)/.test(await pg.textContent('tr[data-fin]:has-text("Bolsa de estágio")')));
+  // folha em lote: provisionar bolsas/salários de todos os próximos meses (pula quem já tem)
+  await pg.click('[data-tab="partners"]'); await pg.waitForSelector('[data-act="payroll"]');
+  check('cartão do estagiário avisa que o pagamento mensal não está provisionado', /não provisionado/.test(await pg.textContent('.pcard:has-text("Pedro Lima")')));
+  await pg.click('[data-act="payroll"]'); await pg.waitForSelector('#pr-list .prov-row');
+  check('folha em lote lista associados e estagiários, pré-marcando só quem não tem meses a pagar', (await pg.$$('#pr-list .prov-row')).length === 2 && await pg.isChecked('#pr-list .prov-row:has-text("Pedro Lima") input') && !(await pg.isChecked('#pr-list .prov-row:has-text("Carla Nunes") input')));
+  await pg.fill('#pr-ate', '2027-02'); await pg.waitForTimeout(100);
+  const nBolsa = (2027 - +hojeYm.slice(0, 4)) * 12 + (2 - +hojeYm.slice(5, 7)); // do mês seguinte até fev/2027
+  check(`botão soma os lançamentos do Pedro (${nBolsa} meses × R$ 900)`, (await pg.textContent('#pr-ok')).replace(/\u00a0/g, ' ').includes(`${nBolsa} lançamentos`) && (await pg.textContent('#pr-ok')).replace(/\u00a0/g, ' ').includes((nBolsa * 900).toLocaleString('pt-BR', { minimumFractionDigits: 2 })));
+  await pg.click('#pr-ok');
+  await pg.waitForFunction(() => !document.querySelector('#pr-list') && [...document.querySelectorAll('.pcard')].some(c => c.textContent.includes('Pedro Lima') && /a pagar, até fevereiro\/2027/.test(c.textContent)), null, { timeout: 8000 });
+  check('bolsas do Pedro provisionadas até fev/2027 e o cartão passa a mostrar', true);
+  await pg.click('[data-tab="finance"]'); await pg.waitForSelector('.provbox.pay');
+  check('contas a pagar incluem salários e bolsas provisionados', /Contas a pagar/.test(await pg.textContent('.provbox.pay')));
   await ctx2.close();
   await ctx.close();
 } catch (e) { console.error('Erro no teste:', e); failures++; }

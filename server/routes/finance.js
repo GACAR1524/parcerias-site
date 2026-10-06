@@ -32,7 +32,7 @@ router.post('/lote', (req, res, next) => {
   try {
     const list = Array.isArray(req.body?.lancamentos) ? req.body.lancamentos : null;
     if (!list || !list.length) return res.status(400).json({ error: 'Informe os lançamentos.' });
-    if (list.length > 120) return res.status(400).json({ error: 'No máximo 120 lançamentos por vez.' });
+    if (list.length > 200) return res.status(400).json({ error: 'No máximo 200 lançamentos por vez.' });
     const items = list.map(financeInput), now = nowISO(), ids = [];
     const ins = db.prepare(`INSERT INTO finance_entries (id, tipo, categoria, descricao, valor, data, observacoes, contract_id, competencia, credit_id, associado_id, case_id, status, vencimento, parcela, grupo_id, criado_por, atualizado_por, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     db.transaction(() => {

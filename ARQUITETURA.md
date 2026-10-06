@@ -281,10 +281,26 @@ Processos e parcerias / Compra de créditos / Contratos com empresas" troca o pa
 
 **Parceiro × associado.** O advogado *parceiro* tem escritório próprio e divide os honorários por
 percentual (`pct_parceiro` / `pct_nosso`). O *associado* trabalha para o escritório: tem
-`area_atuacao` (exibida como "ADVOGADO ASSOCIADO …"), `salario_fixo` (lançado como despesa mensal
-*Advogados associados (salário)* por competência, com o botão "lançar salários" do mês) e
-`pct_bonificacao_padrao` (% sobre o ganho de cada processo, lançada como despesa *Bonificação de
-associado*). Os campos de divisão no processo são opcionais e sobrescrevem o padrão do cadastro.
+`area_atuacao` (exibida como "ADVOGADO ASSOCIADO …"), `salario_fixo` (despesa mensal
+*Advogados associados (salário)* por competência) e `pct_bonificacao_padrao` (% sobre o ganho de
+cada processo, lançada como despesa *Bonificação de associado*). Os campos de divisão no processo
+são opcionais e sobrescrevem o padrão do cadastro.
+
+**Pagamento mensal no Financeiro (v12).** O salário do associado e a bolsa do estagiário são
+provisionados pelo próprio cadastro: a seção "Pagamento mensal no Financeiro" (só administração)
+gera um lançamento por mês — `associado_id` da pessoa, `competencia`, `vencimento` no dia escolhido,
+`grupo_id = sal-<id>` — de "a partir de" até "até" (`payPlan()`/`payEntriesFor()` em `app.js`,
+gravação em lote). Meses com vencimento até hoje nascem `realizado`; os seguintes, `provisionado`
+(aparecem em **Contas a pagar**). Competências que a pessoa já tem são puladas (idempotente com o
+botão "lançar salários e bolsas" do mês, que continua existindo para quem não foi provisionado), e
+o estágio respeita `inicio_estagio`/`fim_estagio`. Para não contar em dobro com lançamentos
+globais feitos à mão (mesma categoria, sem `associado_id`), a tela avisa quando há despesa dessa
+categoria sem pessoa no período e sugere começar no mês seguinte; no cadastro novo o padrão é
+começar no mês atual, na edição no mês seguinte ao último já lançado. Ao alterar o salário/bolsa
+de quem já tem meses a pagar, a tela oferece atualizar esses meses para o novo valor (os pagos não
+mudam); ao desativar a pessoa, oferece excluir os meses a pagar. "Provisionar salários e bolsas"
+na aba de parceiros faz o mesmo para todos os ativos de uma vez (pré-marcando quem não tem meses a
+pagar), e o cartão de cada associado/estagiário mostra até quando está provisionado.
 
 **Processo só do escritório.** Sem parceiro (`partner_id` nulo, 100 % nosso). Em curso, guarda o
 **valor pretendido da ação** e **nossa % de honorários finais**; os *honorários previstos*

@@ -18,7 +18,9 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
   **créditos provisionados** até a baixa; **despesas recorrentes** (aluguel, energia, internet…)
   são lançadas de uma vez para meses passados (já pagos) e futuros (**contas a pagar**, com baixa,
   reajuste dali em diante e encerramento), e qualquer lançamento pode receber data de meses
-  anteriores para reconstruir o histórico.
+  anteriores para reconstruir o histórico; o salário dos associados e a bolsa dos estagiários são
+  provisionados pelo próprio cadastro (ou por "Provisionar salários e bolsas", para todos de uma
+  vez), com aviso para não duplicar lançamentos globais já feitos.
 
 - **Controle de horário dos colaboradores**: advogados associados e estagiários registram entrada, volta do almoço e saída
   pelo celular; a presença é comprovada por **localização (GPS)** e pela **rede do escritório (IP)**,

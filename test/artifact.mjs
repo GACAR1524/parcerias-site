@@ -75,9 +75,13 @@ try {
   await page.click('[data-tab="partners"]'); await page.click('[data-act="new-associado"]'); await page.waitForSelector('#p-form');
   await page.fill('#p-nome', 'Carla Nunes'); await page.press('#p-nome', 'Tab');
   await page.fill('#p-area', 'Trabalhista'); await page.fill('#p-sal', '4500'); await page.fill('#p-bon', '20');
+  await page.fill('#p-prov-ate', '2026-12'); await page.waitForTimeout(100);
   await page.click('#p-save'); await page.waitForSelector('#cred-ok', { timeout: 8000 }); await page.click('#cred-ok');
   await page.waitForFunction(() => [...document.querySelectorAll('.pcard')].some(c => c.textContent.includes('Carla Nunes')), null, { timeout: 8000 });
   check('associado gravado no banco com tipo e bonificação', await page.evaluate(() => { const p = [...window.__mockStore.partners.values()][0]; return p.tipo === 'associado' && p.pctBonificacaoPadrao === 20 && p.salarioFixo === 4500 && p.hash && p.salt; }));
+  const hojeYmA = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 7), nSalA = 12 - +hojeYmA.slice(5, 7) + 1;
+  check(`salário do associado provisionado no artifact (${nSalA} meses até dez/2026, vinculados à pessoa)`, await page.evaluate(n => { const pid = [...window.__mockStore.partners.keys()][0]; const f = [...window.__mockStore.finance.values()].filter(e => e.categoria === 'Advogados associados (salário)'); return f.length === n && f.every(e => e.associadoId === pid && e.grupoId === 'sal-' + pid && e.competencia && e.valor === 4500); }, nSalA));
+  await page.evaluate(() => { for (const [id, e] of [...window.__mockStore.finance.entries()]) if (e.categoria === 'Advogados associados (salário)') window.__mockStore.finance.delete(id); }); // limpa para os totais seguintes
 
   // processo do associado recebido → receita + bonificação
   await page.click('[data-tab="cases"]'); await page.click('[data-act="new-case"]');
