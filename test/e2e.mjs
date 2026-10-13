@@ -15,6 +15,8 @@ const env = { ...process.env, PORT: String(PORT), DB_PATH: path.join(tmp, 'e2e.d
 const server = spawn(process.execPath, ['server/index.js'], { env, stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise(r => server.stdout.on('data', d => { if (String(d).includes('rodando')) r(); }));
 const shots = path.resolve('test/shots'); fs.mkdirSync(shots, { recursive: true });
+/* Datas relativas a hoje (o teste roda em qualquer dia sem mudar o que vence / já venceu). */
+const relDate = n => { const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000 + n * 86400000); return d.toISOString().slice(0, 10); };
 
 const browser = await chromium.launch();
 const errors = [];
@@ -103,18 +105,18 @@ try {
   await page.click('[data-tab="credits"]');
   await page.click('[data-act="new-credit"]');
   await page.fill('#cr-num', '08099999920268170001'); await page.fill('#cr-ced', 'Fulano Cedente'); await page.fill('#cr-vc', '10000'); await page.fill('#cr-vr', '16000');
-  await page.fill('#cr-dp', '2027-02-10');
+  await page.fill('#cr-dp', relDate(128));
   check('resumo do formulário calcula o lucro', (await page.textContent('#cr-summary')).replace(/ /g, ' ').includes('R$ 6.000,00'));
   await page.click('#cr-save');
   await page.waitForSelector('tr[data-credit]', { timeout: 5000 });
-  check('crédito aparece na tabela com a data prevista', (await page.textContent('tr[data-credit]')).replace(/ /g, ' ').includes('previsto para 10/02/2027'));
+  check('crédito aparece na tabela com a data prevista', (await page.textContent('tr[data-credit]')).replace(/ /g, ' ').includes('previsto para ' + relDate(128).split('-').reverse().join('/')));
   // mais créditos pela API (para a linha do tempo): atrasado, sem data, meses variados e um recebido
   const extras = [
-    { numeroProcesso: '08000000120268170001', cedente: 'Cedente A', dataCompra: '2026-05-02', dataPrevista: '2026-08-30', valorCompra: 8000, valorReceber: 12500 },
+    { numeroProcesso: '08000000120268170001', cedente: 'Cedente A', dataCompra: '2026-05-02', dataPrevista: relDate(-43), valorCompra: 8000, valorReceber: 12500 },
     { numeroProcesso: '08000000220268170001', cedente: 'Cedente B', dataCompra: '2026-06-10', dataPrevista: null, valorCompra: 5000, valorReceber: 7000 },
-    { numeroProcesso: '08000000320268170001', cedente: 'Cedente C', dataCompra: '2026-07-01', dataPrevista: '2026-11-20', valorCompra: 20000, valorReceber: 31000 },
-    { numeroProcesso: '08000000420268170001', cedente: 'Cedente D', dataCompra: '2026-07-15', dataPrevista: '2026-11-05', valorCompra: 9000, valorReceber: 14000 },
-    { numeroProcesso: '08000000520268170001', cedente: 'Cedente E', dataCompra: '2026-08-01', dataPrevista: '2027-05-01', valorCompra: 30000, valorReceber: 45000 },
+    { numeroProcesso: '08000000320268170001', cedente: 'Cedente C', dataCompra: '2026-07-01', dataPrevista: relDate(46), valorCompra: 20000, valorReceber: 31000 },
+    { numeroProcesso: '08000000420268170001', cedente: 'Cedente D', dataCompra: '2026-07-15', dataPrevista: relDate(31), valorCompra: 9000, valorReceber: 14000 },
+    { numeroProcesso: '08000000520268170001', cedente: 'Cedente E', dataCompra: '2026-08-01', dataPrevista: relDate(200), valorCompra: 30000, valorReceber: 45000 },
     { numeroProcesso: '08000000620268170001', cedente: 'Cedente F', dataCompra: '2026-03-01', dataPrevista: '2026-09-01', valorCompra: 6000, valorReceber: 9000, recebido: true, valorRecebido: 9000, dataRecebimento: '2026-09-03' }
   ];
   await page.evaluate(async list => { for (const c of list) await fetch('/api/credits', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' }, body: JSON.stringify(c) }); }, extras);
@@ -143,6 +145,7 @@ try {
   finExtras.push({ tipo: 'despesa', categoria: 'Impostos e taxas', valor: 25000, data: '2026-04-20' });
   await page.evaluate(async list => { for (const c of list) await fetch('/api/finance', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' }, body: JSON.stringify(c) }); }, finExtras);
   await page.reload(); await page.waitForSelector('#chart-finance svg', { timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('#chart-finance path.col').length >= 10, null, { timeout: 8000 }).catch(() => {});
   check('gráfico do financeiro desenhado com as duas séries', (await page.$$('#chart-finance path.col')).length >= 10 && (await page.$$('#chart-finance circle')).length >= 7);
   check('resultado do ano exibido', /Lucro|Prejuízo/.test(await page.textContent('.hero .lbl')));
   await page.click('tr[data-fmes="09"]');
@@ -281,7 +284,10 @@ try {
   check('escolher o processo preenche a descrição', (await page.inputValue('#fn-desc')).includes('Cliente Direto'));
   await page.check('#fn-pp'); await page.waitForTimeout(100);
   check('parcelado mostra o plano de parcelas', await page.isVisible('#fn-parc'));
-  await page.fill('#fn-np', '4'); await page.fill('#fn-d1', '2026-07-05'); await page.press('#fn-d1', 'Tab'); await page.waitForTimeout(100);
+  // 1ª parcela 3 meses atrás (dia de amanhã): as parcelas 2 e 3 já venceram e a 4ª vence amanhã — independe do dia em que o teste roda
+  const amanha = new Date(Date.now() - new Date().getTimezoneOffset() * 60000 + 86400000), d1Base = new Date(amanha.getFullYear(), amanha.getMonth() - 3, amanha.getDate());
+  const d1 = `${d1Base.getFullYear()}-${String(d1Base.getMonth() + 1).padStart(2, '0')}-${String(d1Base.getDate()).padStart(2, '0')}`;
+  await page.fill('#fn-np', '4'); await page.fill('#fn-d1', d1); await page.press('#fn-d1', 'Tab'); await page.waitForTimeout(100);
   check('plano calcula 4 parcelas de R$ 1.000,00', (await page.inputValue('#fn-vp')) === '1.000,00' && (await page.textContent('#fn-parc-hint')).includes('4 parcelas'));
   await page.click('#fn-save');
   await page.waitForFunction(() => !document.querySelector('#fn-form'), null, { timeout: 5000 });
@@ -479,6 +485,38 @@ try {
   await pg.click('tr[data-pessoa]:has-text("Pedro Lima")'); await pg.waitForSelector('#esp-ok');
   check('batida manual aparece no espelho como lançada pelo escritório', /lançada pelo escritório/.test(await pg.textContent('#sheet-b')));
   await pg.click('#esp-ok');
+  // feriados e dias sem expediente
+  await pg.click('[data-act="ponto-feriados"]'); await pg.waitForSelector('#hd-form');
+  check('tela de feriados abre vazia', /Nenhum dia marcado/.test(await pg.textContent('#hd-list')));
+  const hojeFer = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  await pg.fill('#hd-de', hojeFer); await pg.fill('#hd-nome', 'Recesso do escritório (teste)'); await pg.click('#hd-add');
+  await pg.waitForFunction(() => /Recesso do escritório/.test(document.querySelector('#hd-list')?.textContent || ''), null, { timeout: 8000 });
+  check('dia sem expediente adicionado à lista', /Recesso do escritório/.test(await pg.textContent('#hd-list')));
+  await pg.click('#hd-nac'); await pg.waitForFunction(() => document.querySelectorAll('#hd-list .prov-row').length >= 13, null, { timeout: 8000 });
+  const hdTxt = await pg.textContent('#hd-list');
+  check('feriados nacionais do ano incluídos (fixos e móveis)', /Natal/.test(hdTxt) && /Carnaval/.test(hdTxt) && /Sexta-feira Santa/.test(hdTxt) && /Corpus Christi/.test(hdTxt) && /Cinzas/.test(hdTxt) && /só a manhã/.test(hdTxt));
+  const nAntes = (await pg.$$('#hd-list .prov-row')).length;
+  await pg.click('#hd-nac'); await pg.waitForTimeout(300);
+  check('incluir de novo não duplica', (await pg.$$('#hd-list .prov-row')).length === nAntes);
+  await pg.click('#hd-ok'); await pg.waitForTimeout(300);
+  const pontoTxt = await pg.textContent('#view');
+  check('hoje marcado como sem expediente: aviso na aba, ninguém "não chegou" e a linha da pessoa mostra sem expediente', /Hoje não há expediente/.test(pontoTxt) && /sem expediente hoje/.test(pontoTxt) && /Feriados e dias sem expediente \(\d+\)/.test(pontoTxt));
+  await pg.click('tr[data-pessoa]:has-text("Pedro Lima")'); await pg.waitForSelector('#sheet-b .espelho');
+  check('espelho mostra o dia como "Sem expediente" com o motivo, sem contar falta', /Sem expediente/.test(await pg.textContent('#sheet-b')) && /Recesso do escritório/.test(await pg.textContent('#sheet-b')) && !/Falta/.test(await pg.textContent('#sheet-b tbody tr:first-child')));
+  await pg.click('#esp-ok');
+  // a pessoa vê o aviso na tela dela
+  const pg3 = await (await browser.newContext({ viewport: { width: 420, height: 860 }, locale: 'pt-BR', geolocation: { latitude: -2.5, longitude: -44.3 }, permissions: ['geolocation'] })).newPage();
+  await pg3.goto(BASE); await pg3.waitForSelector('#lg-user'); await pg3.fill('#lg-user', 'pedro.lima'); await pg3.fill('#lg-pass', senhaEst); await pg3.click('#lg-btn'); await pg3.waitForSelector('.punch-card', { timeout: 8000 });
+  check('estagiário vê que hoje não há expediente, mas ainda pode registrar', /Hoje não há expediente/.test(await pg3.textContent('.punch-card')) && /Recesso do escritório/.test(await pg3.textContent('.punch-card')));
+  await pg3.context().close();
+  // remover o dia de teste
+  await pg.click('[data-act="ponto-feriados"]'); await pg.waitForSelector('#hd-list .prov-row');
+  await pg.click('#hd-list .prov-row:has-text("Recesso do escritório") [data-hd-del]');
+  await pg.waitForFunction(() => !/Recesso do escritório/.test(document.querySelector('#hd-list')?.textContent || ''), null, { timeout: 8000 });
+  await pg.click('#hd-ok'); await pg.waitForTimeout(300);
+  check('removido o dia, o aviso some e sobram os feriados nacionais', !/Hoje não há expediente/.test(await pg.textContent('#view')) && new RegExp(`Feriados e dias sem expediente \\(${nAntes - 1}\\)`).test(await pg.textContent('#view')));
+  await pg.click('[data-act="ponto-config"]'); await pg.waitForSelector('#pc-form'); await pg.click('#pc-ok'); await pg.waitForFunction(() => !document.querySelector('#pc-form'), null, { timeout: 8000 }); await pg.waitForTimeout(200);
+  check('salvar a configuração geral não apaga os feriados', new RegExp(`Feriados e dias sem expediente \\(${nAntes - 1}\\)`).test(await pg.textContent('#view')));
   // bolsa no financeiro
   await pg.click('[data-tab="finance"]'); await pg.waitForSelector('#ff-mes');
   const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0');

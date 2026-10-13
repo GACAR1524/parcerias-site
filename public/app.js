@@ -1498,6 +1498,7 @@ function bindViewOnce(view) {
         case 'punch': return doPunch(id);
         case 'ask-adjust': return openAdjustForm();
         case 'ponto-config': return openPontoConfig();
+        case 'ponto-feriados': return openHolidays();
         case 'ponto-manual': return openManualPunch(id || '');
         case 'ponto-decide': return decidePunch(id, a.dataset.dec);
         case 'ponto-espelho': return openEspelho(partnerById(id), S.fpt.mes);
@@ -2281,52 +2282,75 @@ const tolMin = () => num(S.pontoConfig?.toleranciaMin ?? 20);
 const proofLabel = e => e.origem === 'manual' ? 'lançada pelo escritório' : e.origem === 'ajuste' ? 'ajuste' + (e.status === 'pendente' ? ' pendente' : e.status === 'aprovado' ? ' aprovado' : ' recusado') : (e.redeOk ? 'rede do escritório' : '') + (e.redeOk && e.gpsOk ? ' + ' : '') + (e.gpsOk ? `GPS${e.distanciaM != null ? ' (' + Math.round(e.distanciaM) + ' m)' : ''}` : '') || (e.distanciaM != null ? `fora do raio (${e.distanciaM >= 1000 ? (e.distanciaM / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' km' : Math.round(e.distanciaM) + ' m'})` : (e.observacao || 'sem prova'));
 
 /* Dentro do período em que a pessoa está na equipe (cadastro, início/fim de estágio). */
+const localDateOf = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? String(iso || '').slice(0, 10) : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 function activeOn(p, date) {
-  if (p.criadoEm && date < p.criadoEm.slice(0, 10)) return false;
+  if (p.criadoEm && date < localDateOf(p.criadoEm)) return false; // criadoEm é UTC; compara pela data local
   if (isIntern(p)) { if (p.inicioEstagio && date < p.inicioEstagio) return false; if (p.fimEstagio && date > p.fimEstagio) return false; }
   return true;
 }
+/* Feriados e dias sem expediente (configuração do controle de horário): { de, ate, nome, turno: dia | manha | tarde }. */
+const feriados = () => Array.isArray(S.pontoConfig?.feriados) ? S.pontoConfig.feriados : [];
+const holidayOn = date => feriados().find(f => f.de <= date && date <= (f.ate || f.de)) || null;
+const TURNO_LABEL = { dia: 'dia inteiro', manha: 'só a manhã', tarde: 'só a tarde' };
+const feriadoLabel = f => f ? `${f.nome}${f.turno && f.turno !== 'dia' ? ` (sem expediente ${TURNO_LABEL[f.turno]})` : ''}` : '';
+/* Jornada efetiva do dia: sem blocos no feriado de dia inteiro; só o turno que tem expediente quando o feriado é de meio período. */
+function effJornada(p, date) {
+  const full = jornadaOf(p), fer = holidayOn(date);
+  if (!fer) return { j: full, full, fer: null };
+  const turno = fer.turno || 'dia';
+  const blocos = turno === 'dia' ? [] : full.blocos.filter(b => turno === 'manha' ? toMin(b[0]) >= 13 * 60 : toMin(b[1]) <= 13 * 60);
+  return { j: { ...full, blocos }, full, fer };
+}
 /* Cálculo de um dia: horas feitas, atraso, batidas faltantes e situação. */
 function dayCalc(p, date) {
-  const j = jornadaOf(p), plan = planOf(j), tol = tolMin(), today = todayISO();
+  const { j, full, fer } = effJornada(p, date), tol = tolMin(), today = todayISO();
+  const b = j.blocos, semExp = b.length === 0, plan = semExp ? planOf(full) : planOf(j); // sem expediente: quem vier trabalhar registra pela jornada normal
   const all = S.ponto.filter(e => e.partnerId === p.id && e.data === date);
   const valid = all.filter(countsPunch).sort((a, b) => a.hora.localeCompare(b.hora));
   const by = {}; for (const e of valid) if (!by[e.tipo]) by[e.tipo] = e;
   const pend = all.filter(e => e.status === 'pendente');
-  const util = j.dias.includes(weekdayOf(date)) && activeOn(p, date);
+  const util = !semExp && j.dias.includes(weekdayOf(date)) && activeOn(p, date);
   const t = k => by[k] ? toMin(by[k].hora) : null;
   const ent = t('entrada'), vol = t('volta'), sai = t('saida');
-  const b = j.blocos, two = b.length > 1, isToday = date === today, cur = toMin(nowHM());
+  const two = b.length > 1, isToday = date === today, cur = toMin(nowHM());
   let feito = 0;
-  if (ent != null) {
-    let end1 = two ? toMin(b[0][1]) : sai;           // 1º turno: até o fim previsto (quando há 2 turnos) ou até a saída
-    if (end1 == null && isToday) end1 = cur;          // turno único ainda em andamento
-    if (end1 != null) { if (isToday && two) end1 = Math.min(end1, Math.max(cur, ent)); feito += Math.max(0, end1 - ent); }
+  if (semExp) { // dia sem expediente: conta da entrada até a saída (ou até agora), sem descontar almoço previsto
+    if (ent != null) { const fimE = sai != null ? sai : (isToday ? cur : null); if (fimE != null) feito = Math.max(0, fimE - ent) - (vol != null && sai != null && full.blocos.length > 1 ? Math.max(0, vol - toMin(full.blocos[0][1])) : 0); }
+  } else {
+    if (ent != null) {
+      let end1 = two ? toMin(b[0][1]) : sai;           // 1º turno: até o fim previsto (quando há 2 turnos) ou até a saída
+      if (end1 == null && isToday) end1 = cur;          // turno único ainda em andamento
+      if (end1 != null) { if (isToday && two) end1 = Math.min(end1, Math.max(cur, ent)); feito += Math.max(0, end1 - ent); }
+    }
+    if (two && vol != null) { if (sai != null) feito += Math.max(0, sai - vol); else if (isToday) feito += Math.max(0, cur - vol); }
   }
-  if (two && vol != null) { if (sai != null) feito += Math.max(0, sai - vol); else if (isToday) feito += Math.max(0, cur - vol); }
   let atraso = 0;
-  if (ent != null && ent > toMin(b[0][0]) + tol) atraso += ent - toMin(b[0][0]);
-  if (two && vol != null && vol > toMin(b[1][0]) + tol) atraso += vol - toMin(b[1][0]);
-  const fim = toMin(b[b.length - 1][1]);
-  const extra = sai != null ? Math.max(0, sai - fim) : 0, antecipada = sai != null ? Math.max(0, fim - sai) : 0;
+  if (!semExp) {
+    if (ent != null && ent > toMin(b[0][0]) + tol) atraso += ent - toMin(b[0][0]);
+    if (two && vol != null && vol > toMin(b[1][0]) + tol) atraso += vol - toMin(b[1][0]);
+  }
+  const fim = semExp ? null : toMin(b[b.length - 1][1]);
+  const extra = !semExp && sai != null ? Math.max(0, sai - fim) : 0, antecipada = !semExp && sai != null ? Math.max(0, fim - sai) : 0;
   const missing = plan.filter(x => !by[x.tipo]).map(x => x.tipo);
   const next = missing[0] || null;
   let status;
   if (date > today) status = 'futuro';
+  else if (semExp && fer) status = 'feriado';
   else if (!util && !valid.length && !pend.length) status = 'folga';
   else if (!valid.length && !pend.length) status = isToday ? (cur > toMin(b[0][0]) + tol ? 'ausente' : 'aguardando') : 'falta';
   else if (isToday && missing.length) status = 'em_andamento';
   else if (missing.length) status = 'incompleto';
   else status = atraso > 0 ? 'atraso' : 'ok';
-  return { j, plan, by, pend, util, feito, previsto: util ? previstoMin(j) : 0, atraso, extra, antecipada, missing, next, status, valid, all };
+  return { j, plan, by, pend, util, fer, semExp, feito, previsto: util ? previstoMin(j) : 0, atraso, extra, antecipada, missing, next, status, valid, all };
 }
 function monthCalc(p, ym) {
   const today = todayISO(), [y, m] = ym.split('-'), n = lastDay(y, m);
-  const t = { diasUteis: 0, presencas: 0, faltas: 0, atrasos: 0, atrasoMin: 0, feito: 0, previsto: 0, incompletos: 0, extra: 0, pendentes: 0, dias: [] };
+  const t = { diasUteis: 0, presencas: 0, faltas: 0, atrasos: 0, atrasoMin: 0, feito: 0, previsto: 0, incompletos: 0, extra: 0, pendentes: 0, feriados: 0, dias: [] };
   for (let d = 1; d <= n; d++) {
     const date = `${ym}-${String(d).padStart(2, '0')}`; if (date > today) break;
     const c = dayCalc(p, date); t.dias.push({ date, ...c });
     if (c.util) { t.diasUteis++; t.previsto += c.previsto; }
+    if (c.fer && jornadaOf(p).dias.includes(weekdayOf(date)) && activeOn(p, date)) t.feriados++;
     if (c.valid.length) t.presencas++;
     if (c.status === 'falta') t.faltas++;
     if (c.atraso > 0) { t.atrasos++; t.atrasoMin += c.atraso; }
@@ -2336,7 +2360,8 @@ function monthCalc(p, ym) {
   t.saldo = t.feito - t.previsto;
   return t;
 }
-const dayPill = st => ({ ok: '<span class="pill ok">Em dia</span>', atraso: '<span class="pill warn">Atraso</span>', falta: '<span class="pill bad">Falta</span>', incompleto: '<span class="pill warn">Incompleto</span>', em_andamento: '<span class="pill wait">Em expediente</span>', aguardando: '<span class="pill wait">Aguardando</span>', ausente: '<span class="pill bad">Não chegou</span>', folga: '<span class="pill muted">Folga</span>', futuro: '<span class="pill muted">—</span>' }[st] || '');
+const STATUS_LABEL = { ok: 'Em dia', atraso: 'Atraso', falta: 'Falta', incompleto: 'Incompleto', em_andamento: 'Em expediente', aguardando: 'Aguardando', ausente: 'Não chegou', folga: 'Folga', feriado: 'Sem expediente' };
+const dayPill = st => ({ ok: '<span class="pill ok">Em dia</span>', atraso: '<span class="pill warn">Atraso</span>', falta: '<span class="pill bad">Falta</span>', incompleto: '<span class="pill warn">Incompleto</span>', em_andamento: '<span class="pill wait">Em expediente</span>', aguardando: '<span class="pill wait">Aguardando</span>', ausente: '<span class="pill bad">Não chegou</span>', folga: '<span class="pill muted">Folga</span>', feriado: '<span class="pill muted">Sem expediente</span>', futuro: '<span class="pill muted">—</span>' }[st] || '');
 const punchCell = (c, tipo) => { const e = c.by[tipo]; if (e) return `<b>${hhmm(e.hora)}</b><span class="sub">${esc(proofLabel(e))}</span>`; const pd = c.pend.find(x => x.tipo === tipo); if (pd) return `<span class="muted">${hhmm(pd.hora)}</span><span class="sub" style="color:var(--warn)">pendente · ${esc(pd.origem === 'ajuste' ? 'ajuste' : proofLabel(pd))}</span>`; return c.plan.some(x => x.tipo === tipo) ? '<span class="muted">—</span>' : ''; };
 const pontoMonths = () => { const out = [], d = new Date(); for (let i = 0; i < 13; i++) { const t = new Date(d.getFullYear(), d.getMonth() - i, 1); out.push(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`); } return out; };
 async function ensurePontoMonth(ym) {
@@ -2384,7 +2409,7 @@ function paintGeo() { const el = $('#geo-status'); if (el) el.innerHTML = geoTex
 /* ---- tela da pessoa: Meu ponto ---- */
 function renderMyPonto() {
   const p = partnerById(myPartnerId()); if (!p) return '<div class="empty"><b>Cadastro não encontrado</b></div>';
-  const today = todayISO(), c = dayCalc(p, today), j = c.j, ym = S.fpt.mes, mc = monthCalc(p, ym);
+  const today = todayISO(), c = dayCalc(p, today), j = jornadaOf(p), ym = S.fpt.mes, mc = monthCalc(p, ym);
   const nextLabel = c.next ? `Registrar ${PT_TIPOS[c.next].toLowerCase()}` : null;
   const steps = c.plan.map(x => { const e = c.by[x.tipo], pd = c.pend.find(q => q.tipo === x.tipo); return `<div class="step ${e ? 'done' : pd ? 'pend' : x.tipo === c.next ? 'next' : ''}"><span class="lbl">${PT_TIPOS[x.tipo]}</span><b>${e ? hhmm(e.hora) : pd ? hhmm(pd.hora) + ' ?' : x.hora}</b><small>${e ? esc(proofLabel(e)) : pd ? 'pendente' : 'previsto'}</small></div>`; }).join('');
   if (S.geo.state === 'idle' && S.pontoConfig?.configurado && S.pontoConfig.lat != null) setTimeout(() => checkGeo(false), 50);
@@ -2395,8 +2420,9 @@ function renderMyPonto() {
       <div class="punch-clock"><div class="date">${WD_FULL[d.getDay()].charAt(0).toUpperCase() + WD_FULL[d.getDay()].slice(1)}, ${d.getDate()} de ${MONTHS_FULL[d.getMonth()].toLowerCase()}</div><div class="time" id="clock">${d.toTimeString().slice(0, 8)}</div><small>${api.features.serverClock ? 'o horário gravado é o do servidor' : 'horário do aparelho'}</small></div>
       <div class="punch-main">
         <div class="steps">${steps}</div>
+        ${c.fer ? `<div class="note" style="margin-bottom:10px"><b>${c.semExp ? 'Hoje não há expediente' : 'Hoje o expediente é ' + (c.fer.turno === 'manha' ? 'só pela tarde' : 'só pela manhã')}:</b> ${esc(c.fer.nome)}. ${c.semExp ? 'Ninguém recebe falta; se vier trabalhar, pode registrar normalmente e as horas contam como extras.' : 'O turno sem expediente não conta como falta.'}</div>` : ''}
         ${S.canWrite ? (nextLabel ? `<button class="punch-btn" type="button" data-act="punch" data-id="${c.next}">${nextLabel}</button>` : '<div class="punch-done">Jornada de hoje concluída ✓</div>') : ''}
-        ${!c.util && c.next ? '<p class="hint">Hoje não é dia de expediente na sua jornada; o horário é registrado mesmo assim.</p>' : ''}
+        ${!c.util && !c.fer && c.next ? '<p class="hint">Hoje não é dia de expediente na sua jornada; o horário é registrado mesmo assim.</p>' : ''}
         <div class="geo-status" id="geo-status">${geoText()}</div>
       </div>
     </section>
@@ -2404,7 +2430,7 @@ function renderMyPonto() {
       ${tile('Horas no mês', fmtMin(mc.feito), `de ${fmtMin(mc.previsto)} previstas`)}
       ${tile('Saldo', fmtMin(mc.saldo), mc.saldo < 0 ? 'a compensar' : 'a favor', mc.saldo < 0 ? 'neg' : 'pos')}
       ${tile('Atrasos', String(mc.atrasos), mc.atrasoMin ? fmtMin(mc.atrasoMin) + ' no total' : 'nenhum minuto')}
-      ${tile('Faltas', String(mc.faltas), mc.incompletos ? `${mc.incompletos} dia${mc.incompletos === 1 ? '' : 's'} com registro faltando` : 'dias úteis sem registro')}
+      ${tile('Faltas', String(mc.faltas), mc.incompletos ? `${mc.incompletos} dia${mc.incompletos === 1 ? '' : 's'} com registro faltando` : mc.feriados ? `${mc.feriados} dia${mc.feriados === 1 ? '' : 's'} sem expediente no mês` : 'dias úteis sem registro')}
     </div>
     <div class="card-h"><h2>Espelho de ${ymLabel(ym)}</h2><div class="toolbar">${monthSelect()}${S.canWrite ? '<button class="btn btn-sm" type="button" data-act="ask-adjust">Esqueci de registrar — pedir ajuste</button>' : ''}</div></div>
     ${espelhoTable(p, mc, false)}
@@ -2416,7 +2442,7 @@ function espelhoTable(p, mc, admin) {
     <td><span class="mono">${fmtDate(d.date)}</span><span class="sub">${WD[weekdayOf(d.date)]}</span></td>
     <td>${punchCell(d, 'entrada')}</td>${two ? `<td>${punchCell(d, 'volta')}</td>` : ''}<td>${punchCell(d, 'saida')}</td>
     <td class="num">${d.feito ? fmtMin(d.feito) : '—'}${d.previsto ? `<span class="sub">de ${fmtMin(d.previsto)}</span>` : ''}</td>
-    <td>${dayPill(d.status)}${d.atraso ? `<span class="sub">atraso ${fmtMin(d.atraso)}</span>` : d.extra ? `<span class="sub">+${fmtMin(d.extra)} além do horário</span>` : d.antecipada && d.status !== 'incompleto' ? `<span class="sub">saiu ${fmtMin(d.antecipada)} antes</span>` : ''}</td>
+    <td>${dayPill(d.status)}${d.fer ? `<span class="sub">${esc(feriadoLabel(d.fer))}${d.semExp && d.feito ? ' · horas contam como extras' : ''}</span>` : d.atraso ? `<span class="sub">atraso ${fmtMin(d.atraso)}</span>` : d.extra ? `<span class="sub">+${fmtMin(d.extra)} além do horário</span>` : d.antecipada && d.status !== 'incompleto' ? `<span class="sub">saiu ${fmtMin(d.antecipada)} antes</span>` : ''}</td>
   </tr>`).join('');
   return `<div class="table-wrap"><table class="espelho"><thead><tr><th>Dia</th><th>Entrada</th>${two ? '<th>Volta</th>' : ''}<th>Saída</th><th class="num">Horas</th><th>Situação</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">Nenhum dia útil ainda neste mês.</td></tr>`}</tbody></table></div>`;
 }
@@ -2471,14 +2497,14 @@ function renderPonto() {
   const two = list.some(p => jornadaOf(p).blocos.length > 1);
   const todayRows = todayCalc.map(({ p, d }) => `<tr data-pessoa="${esc(p.id)}" tabindex="0">
     <td><b>${esc(p.nome)}</b><span class="sub">${esc(partnerKind(p))}</span></td>
-    <td><span class="mono">${jornadaLabel(d.j)}</span>${d.util ? '' : '<span class="sub">folga hoje</span>'}</td>
+    <td><span class="mono">${jornadaLabel(jornadaOf(p))}</span>${d.fer ? `<span class="sub">${esc(d.semExp ? 'sem expediente hoje' : 'expediente ' + (d.fer.turno === 'manha' ? 'só à tarde' : 'só de manhã'))}</span>` : d.util ? '' : '<span class="sub">folga hoje</span>'}</td>
     <td>${punchCell(d, 'entrada')}</td>${two ? `<td>${punchCell(d, 'volta')}</td>` : ''}<td>${punchCell(d, 'saida')}</td>
     <td class="num">${d.feito ? fmtMin(d.feito) : '—'}</td>
     <td>${dayPill(d.status)}${d.atraso ? `<span class="sub">atraso ${fmtMin(d.atraso)}</span>` : ''}</td>
   </tr>`).join('');
   const monthRows = list.map(p => { const m = monthCalc(p, ym); return `<tr data-pessoa="${esc(p.id)}" tabindex="0">
     <td><b>${esc(p.nome)}</b><span class="sub">${esc(partnerKind(p))}</span></td>
-    <td class="num">${m.diasUteis}</td><td class="num">${m.presencas}</td>
+    <td class="num">${m.diasUteis}${m.feriados ? `<span class="sub">${m.feriados} sem expediente</span>` : ''}</td><td class="num">${m.presencas}</td>
     <td class="num ${m.faltas ? 'neg' : ''}">${m.faltas}${m.incompletos ? `<span class="sub">+${m.incompletos} incompleto${m.incompletos === 1 ? '' : 's'}</span>` : ''}</td>
     <td class="num ${m.atrasos ? 'neg' : ''}">${m.atrasos}${m.atrasoMin ? `<span class="sub">${fmtMin(m.atrasoMin)}</span>` : ''}</td>
     <td class="num">${fmtMin(m.feito)}<span class="sub">de ${fmtMin(m.previsto)}</span></td>
@@ -2493,8 +2519,9 @@ function renderPonto() {
         ${monthSelect()}
         <select id="fpt-pessoa" data-fpt="pessoa" aria-label="Pessoa"><option value="">Toda a equipe</option>${employees().map(p => `<option value="${esc(p.id)}" ${S.fpt.pessoa === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
         ${api.features.export ? `<button class="btn" type="button" data-act="export-ponto" data-id="${esc(S.fpt.pessoa)}">Exportar espelho (CSV)</button>` : ''}
-        ${S.canWrite ? `<button class="btn" type="button" data-act="ponto-manual" data-id="${esc(S.fpt.pessoa)}">+ Registro manual</button><button class="btn btn-primary" type="button" data-act="ponto-config">Configurar</button>` : ''}
+        ${S.canWrite ? `<button class="btn" type="button" data-act="ponto-feriados" title="Marcar feriados e dias sem expediente: ninguém recebe falta nesses dias">Feriados e dias sem expediente${feriados().length ? ` (${feriados().length})` : ''}</button><button class="btn" type="button" data-act="ponto-manual" data-id="${esc(S.fpt.pessoa)}">+ Registro manual</button><button class="btn btn-primary" type="button" data-act="ponto-config">Configurar</button>` : ''}
       </div></div>
+    ${holidayOn(today) ? `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>${holidayOn(today).turno && holidayOn(today).turno !== 'dia' ? 'Hoje o expediente é de meio período' : 'Hoje não há expediente'}:</b> ${esc(feriadoLabel(holidayOn(today)))}. Ninguém recebe falta; quem registrar horário tem as horas contadas como extras.</span></div>` : ''}
     ${!configured ? `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>A validação de presença ainda não está configurada.</b> Informe a localização${api.features.ip ? ' e o IP' : ''} do escritório para que os registros feitos fora dele fiquem pendentes.</span><button class="btn btn-sm btn-primary" type="button" data-act="ponto-config">Configurar agora</button></div>` : ''}
     ${!employees().length ? `<div class="empty"><b>Ninguém registra horário ainda</b>Cadastre advogados associados e estagiários em “Parceiros e associados”; cada um recebe um login e a aba “Meu horário”.</div>` : `
     <div class="tiles">
@@ -2508,7 +2535,7 @@ function renderPonto() {
     ${pend.length ? `<div class="card-h" style="margin-top:18px"><h2>Pendências</h2><small>${pend.length} para decidir</small></div><div class="prov-list" style="max-height:none">${pendRows}</div>` : ''}
     <div class="card-h" style="margin-top:18px"><h2>Resumo de ${ymLabel(ym)}</h2><small>clique na pessoa para ver o espelho dia a dia</small></div>
     <div class="table-wrap"><table><thead><tr><th>Pessoa</th><th class="num">Dias úteis</th><th class="num">Presenças</th><th class="num">Faltas</th><th class="num">Atrasos</th><th class="num">Horas</th><th class="num">Saldo</th></tr></thead><tbody>${monthRows}</tbody></table></div>
-    <div class="tfoot"><span>Falta = dia útil da jornada sem nenhum registro. Incompleto = dia com registro faltando (peça o ajuste à pessoa ou lance manualmente).</span><span>${api.features.serverClock ? 'Horários gravados pelo servidor.' : 'Horários do aparelho de quem bate (versão no Claude).'}</span></div>`}`;
+    <div class="tfoot"><span>Falta = dia útil da jornada sem nenhum registro (feriados e dias sem expediente não contam). Incompleto = dia com registro faltando (peça o ajuste à pessoa ou lance manualmente).</span><span>${api.features.serverClock ? 'Horários gravados pelo servidor.' : 'Horários do aparelho de quem bate (versão no Claude).'}</span></div>`}`;
 }
 function openEspelho(p, ym) {
   if (!p) return;
@@ -2581,6 +2608,7 @@ function openPontoConfig() {
           <div class="field"><label for="pc-fuso">Fuso horário</label><select id="pc-fuso">${FUSOS.map(f => `<option ${c.fuso === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
         </div>
         <label class="check" for="pc-prova"><input type="checkbox" id="pc-prova" ${c.exigirProva !== false ? 'checked' : ''}><span>Exigir prova de presença<small>registros fora do escritório ficam pendentes até você aprovar; desmarcado, todo registro vale</small></span></label>
+        <p class="hint">Feriados e dias sem expediente ficam no botão “Feriados e dias sem expediente”, na aba Controle de horário.</p>
       </fieldset>
       <p class="err" id="pc-err"></p>
       <div class="form-actions"><button class="btn" type="button" id="pc-cancel">Cancelar</button><button class="btn btn-primary" type="submit" id="pc-ok">Salvar</button></div>
@@ -2592,12 +2620,86 @@ function openPontoConfig() {
     e.preventDefault(); const err = $('#pc-err');
     const lat = $('#pc-lat').value.trim().replace(',', '.'), lng = $('#pc-lng').value.trim().replace(',', '.');
     if ((lat === '') !== (lng === '')) return err.textContent = 'Informe latitude e longitude juntas.';
-    const data = { endereco: $('#pc-end').value.trim(), lat: lat === '' ? null : Number(lat), lng: lng === '' ? null : Number(lng), raioM: Number($('#pc-raio').value) || 150, ips: $('#pc-ips') ? $('#pc-ips').value.split(/[\s,;]+/).filter(Boolean) : [], toleranciaMin: Number($('#pc-tol').value) || 0, exigirProva: $('#pc-prova').checked, fuso: $('#pc-fuso').value };
+    const data = { endereco: $('#pc-end').value.trim(), lat: lat === '' ? null : Number(lat), lng: lng === '' ? null : Number(lng), raioM: Number($('#pc-raio').value) || 150, ips: $('#pc-ips') ? $('#pc-ips').value.split(/[\s,;]+/).filter(Boolean) : [], toleranciaMin: Number($('#pc-tol').value) || 0, exigirProva: $('#pc-prova').checked, fuso: $('#pc-fuso').value, feriados: feriados() };
     if (data.lat != null && (!Number.isFinite(data.lat) || !Number.isFinite(data.lng))) return err.textContent = 'Latitude/longitude inválidas.';
     $('#pc-ok').disabled = true;
     try { const r = await api.savePontoConfig(data); S.pontoConfig = { ...S.pontoConfig, ...(r?.config || data), configurado: data.lat != null || data.ips.length > 0 }; toast('Configuração salva.'); closeSheet(); render(); }
     catch (e2) { err.textContent = writeError(e2); $('#pc-ok').disabled = false; }
   });
+}
+/* ---- feriados e dias sem expediente ---- */
+/* Páscoa (algoritmo de Meeus/Jones/Butcher) para os feriados móveis. */
+function easterOf(y) { const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451), mo = Math.floor((h + l - 7 * m + 114) / 31), da = ((h + l - 7 * m + 114) % 31) + 1; return `${y}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`; }
+function feriadosNacionais(y) {
+  const pascoa = easterOf(y), d = k => addDays(pascoa, k), fix = (md, nome) => ({ de: `${y}-${md}`, ate: `${y}-${md}`, nome, turno: 'dia' });
+  return [
+    fix('01-01', 'Confraternização Universal'),
+    { de: d(-48), ate: d(-47), nome: 'Carnaval', turno: 'dia' },
+    { de: d(-46), ate: d(-46), nome: 'Quarta-feira de Cinzas (ponto facultativo até 14h)', turno: 'manha' },
+    { de: d(-2), ate: d(-2), nome: 'Sexta-feira Santa', turno: 'dia' },
+    fix('04-21', 'Tiradentes'), fix('05-01', 'Dia do Trabalho'),
+    { de: d(60), ate: d(60), nome: 'Corpus Christi', turno: 'dia' },
+    fix('09-07', 'Independência do Brasil'), fix('10-12', 'Nossa Senhora Aparecida'), fix('11-02', 'Finados'), fix('11-15', 'Proclamação da República'), fix('11-20', 'Dia da Consciência Negra'), fix('12-25', 'Natal')
+  ];
+}
+const feriadosMaranhao = y => [{ de: `${y}-07-28`, ate: `${y}-07-28`, nome: 'Adesão do Maranhão à Independência (feriado estadual)', turno: 'dia' }, { de: `${y}-09-08`, ate: `${y}-09-08`, nome: 'Fundação de São Luís (feriado municipal)', turno: 'dia' }, { de: `${y}-12-08`, ate: `${y}-12-08`, nome: 'Nossa Senhora da Conceição (padroeira de São Luís)', turno: 'dia' }];
+function openHolidays() {
+  const anoAtual = new Date().getFullYear();
+  openSheet('Feriados e dias sem expediente', `
+    <p class="hint">Nos dias marcados aqui <b>ninguém recebe falta</b> e as horas previstas são zeradas (ou reduzidas, quando só um turno não tem expediente). Quem vier trabalhar pode registrar normalmente — as horas contam como extras. Vale para toda a equipe.</p>
+    <form id="hd-form" autocomplete="off" novalidate>
+      <div class="row">
+        <div class="field"><label for="hd-de">Dia <small>(ou início)</small></label><input type="date" id="hd-de" value="${todayISO()}" required></div>
+        <div class="field"><label for="hd-ate">Até <small>(opcional, para recesso)</small></label><input type="date" id="hd-ate"></div>
+        <div class="field"><label for="hd-turno">Sem expediente</label><select id="hd-turno"><option value="dia">O dia inteiro</option><option value="manha">Só pela manhã</option><option value="tarde">Só pela tarde</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field grow"><label for="hd-nome">Motivo</label><input type="text" id="hd-nome" placeholder="ex.: Feriado municipal, Recesso de fim de ano, Reforma do escritório"></div>
+        <div class="field" style="justify-content:flex-end"><button class="btn btn-primary" type="submit" id="hd-add">Adicionar</button></div>
+      </div>
+      <p class="err" id="hd-err"></p>
+    </form>
+    <div class="row" style="align-items:center;margin-bottom:10px">
+      <div class="field"><label for="hd-ano">Incluir de uma vez</label><select id="hd-ano">${[anoAtual - 1, anoAtual, anoAtual + 1].map(y => `<option value="${y}" ${y === anoAtual ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
+      <div class="field" style="justify-content:flex-end;gap:6px;flex-direction:row;flex-wrap:wrap"><button class="btn btn-sm" type="button" id="hd-nac">Feriados nacionais</button><button class="btn btn-sm" type="button" id="hd-ma">Maranhão e São Luís</button></div>
+    </div>
+    <p class="hint">Os nacionais incluem Carnaval (2 dias), Quarta-feira de Cinzas (só a manhã), Sexta-feira Santa e Corpus Christi — remova o que o escritório não observa. Confira os estaduais/municipais com o calendário oficial do ano.</p>
+    <div class="card-h"><h2>Dias marcados</h2><small id="hd-count"></small></div>
+    <div class="prov-list" id="hd-list" style="max-height:40vh"></div>
+    <div class="form-actions"><button class="btn btn-primary" type="button" id="hd-ok">Fechar</button></div>`);
+  const sheet = $('#sheet-b');
+  const paint = () => {
+    const list = feriados().slice().sort((a, b) => b.de.localeCompare(a.de)), today = todayISO();
+    $('#hd-count').textContent = list.length ? `${list.length} · ${list.filter(f => (f.ate || f.de) >= today).length} ainda por vir` : 'nenhum';
+    $('#hd-list').innerHTML = list.length ? list.map((f, i) => `<div class="prov-row ${(f.ate || f.de) < today ? 'muted' : ''}" style="cursor:default">
+      <span class="pr-main"><b>${esc(f.nome)}</b><small>${f.ate && f.ate !== f.de ? `${fmtDate(f.de)} a ${fmtDate(f.ate)}` : `${fmtDate(f.de)} (${WD_FULL[weekdayOf(f.de)]})`}${f.turno && f.turno !== 'dia' ? ' · sem expediente ' + TURNO_LABEL[f.turno] : ''}</small></span>
+      <span class="pr-side"><button class="btn btn-sm btn-ghost" type="button" data-hd-del="${esc(f.de)}|${esc(f.ate || f.de)}|${esc(f.turno || 'dia')}">Remover</button></span></div>`).join('') : '<div class="empty"><b>Nenhum dia marcado</b>Adicione um dia acima ou inclua os feriados do ano.</div>';
+  };
+  const save = async (list, msg) => {
+    const err = $('#hd-err'); err.textContent = '';
+    try {
+      const data = { ...(S.pontoConfig || {}), feriados: list };
+      const r = await api.savePontoConfig(data);
+      S.pontoConfig = { ...S.pontoConfig, ...(r?.config || data) };
+      toast(msg); paint(); render();
+    } catch (e) { err.textContent = writeError(e); }
+  };
+  const merge = (add) => { const cur = feriados(), key = f => `${f.de}|${f.ate || f.de}|${f.turno || 'dia'}`, have = new Set(cur.map(key)); const novos = add.filter(f => !have.has(key(f))); return { list: cur.concat(novos), n: novos.length }; };
+  $('#hd-form').addEventListener('submit', e => {
+    e.preventDefault(); const de = $('#hd-de').value, ate = $('#hd-ate').value || de, nome = $('#hd-nome').value.trim(), turno = $('#hd-turno').value, err = $('#hd-err');
+    if (!de) return err.textContent = 'Informe o dia.';
+    if (ate < de) return err.textContent = 'O fim não pode ser antes do início.';
+    if (!nome) return err.textContent = 'Informe o motivo (ex.: feriado municipal).';
+    const { list, n } = merge([{ de, ate, nome, turno }]);
+    if (!n) return err.textContent = 'Esse dia já está marcado.';
+    $('#hd-nome').value = ''; $('#hd-ate').value = '';
+    save(list, ate !== de ? `Período sem expediente marcado: ${fmtDate(de)} a ${fmtDate(ate)}.` : `${fmtDate(de)} marcado como sem expediente.`);
+  });
+  $('#hd-nac').addEventListener('click', () => { const y = +$('#hd-ano').value, { list, n } = merge(feriadosNacionais(y)); if (!n) return toast(`Feriados nacionais de ${y} já estavam incluídos.`); save(list, `${n} feriados nacionais de ${y} incluídos.`); });
+  $('#hd-ma').addEventListener('click', () => { const y = +$('#hd-ano').value, { list, n } = merge(feriadosMaranhao(y)); if (!n) return toast(`Feriados do Maranhão e de São Luís de ${y} já estavam incluídos.`); save(list, `${n} feriados do Maranhão/São Luís de ${y} incluídos.`); });
+  sheet.addEventListener('click', e => { const b = e.target.closest('[data-hd-del]'); if (!b) return; const [de, ate, turno] = b.dataset.hdDel.split('|'); save(feriados().filter(f => !(f.de === de && (f.ate || f.de) === ate && (f.turno || 'dia') === turno)), 'Dia removido.'); });
+  $('#hd-ok').addEventListener('click', closeSheet);
+  paint();
 }
 async function exportPontoCSV(pid) {
   const list = employees().filter(p => !pid || p.id === pid), ym = S.fpt.mes;
@@ -2607,7 +2709,7 @@ async function exportPontoCSV(pid) {
   for (const p of list) for (const d of monthCalc(p, ym).dias) {
     if (d.status === 'folga' && !d.valid.length) continue;
     const prova = ['entrada', 'volta', 'saida'].filter(t => d.by[t]).map(t => `${PT_TIPOS[t]}: ${proofLabel(d.by[t])}`).join(' · ');
-    rows.push([p.nome, tipoLabel(p), fmtDate(d.date), WD[weekdayOf(d.date)], hhmm(d.by.entrada?.hora), hhmm(d.by.volta?.hora), hhmm(d.by.saida?.hora), fmtMin(d.feito), fmtMin(d.previsto), d.atraso, { ok: 'Em dia', atraso: 'Atraso', falta: 'Falta', incompleto: 'Incompleto', em_andamento: 'Em expediente', aguardando: 'Aguardando', ausente: 'Não chegou', folga: 'Folga' }[d.status] || d.status, prova].map(q).join(';'));
+    rows.push([p.nome, tipoLabel(p), fmtDate(d.date), WD[weekdayOf(d.date)], hhmm(d.by.entrada?.hora), hhmm(d.by.volta?.hora), hhmm(d.by.saida?.hora), fmtMin(d.feito), fmtMin(d.previsto), d.atraso, (STATUS_LABEL[d.status] || d.status) + (d.fer ? ' — ' + feriadoLabel(d.fer) : ''), prova].map(q).join(';'));
   }
   const csv = '﻿' + head.map(q).join(';') + '\r\n' + rows.join('\r\n');
   try { const ok = await api.exportCSV(`espelho-horario-${ym}${pid ? '-' + (partnerById(pid)?.nome || '').toLowerCase().replace(/\s+/g, '-') : ''}.csv`, csv); if (ok) toast('Espelho exportado.'); }

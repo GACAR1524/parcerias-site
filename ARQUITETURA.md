@@ -123,7 +123,7 @@ erDiagram
   }
   settings {
     text chave PK "ponto"
-    text valor "JSON: lat, lng, raioM, ips, toleranciaMin, exigirProva, fuso"
+    text valor "JSON: lat, lng, raioM, ips, toleranciaMin, exigirProva, fuso, feriados"
   }
   cases {
     text id PK
@@ -247,6 +247,18 @@ turnos) ou até a saída; as do 2º, da volta até a saída. Atraso = entrada (o
 previsto + tolerância (20 min por padrão; configurável). Falta = dia útil da jornada sem batida;
 *incompleto* = dia com batida faltando. Faltas só contam dentro do período do estágio e a partir
 do cadastro da pessoa.
+
+**Feriados e dias sem expediente (v12).** Lista em `settings.ponto.feriados`
+(`[{ de, ate, nome, turno: dia | manha | tarde }]`, validada em `feriadosInput`, enviada também na
+configuração pública da equipe). Botão "Feriados e dias sem expediente" na aba de controle de
+horário: adiciona um dia ou período (recesso), de dia inteiro ou só um turno, e inclui de uma vez
+os feriados nacionais do ano (fixos + Carnaval, Quarta-feira de Cinzas só a manhã, Sexta-feira
+Santa e Corpus Christi, calculados pela Páscoa — `easterOf`) e os do Maranhão/São Luís; a tela de
+configuração geral reenvia a lista atual para não a apagar. `effJornada(p, date)` zera os blocos
+no feriado de dia inteiro e mantém só o turno com expediente no de meio período; `dayCalc` usa a
+jornada efetiva: dia sem expediente → `util = false`, status **`feriado`** ("Sem expediente"), sem
+falta e sem horas previstas; quem registrar tem as horas contadas (entram como extras). O
+`monthCalc` soma `feriados` do mês; a aba e o "Meu horário" avisam quando hoje não há expediente.
 
 **Prova de presença ("cerca virtual + rede do escritório").** Ao bater, o aparelho envia
 latitude/longitude/precisão; o servidor grava o **horário do servidor** no fuso configurado e

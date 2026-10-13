@@ -108,7 +108,9 @@ try {
   await page.fill('#fn-cat', 'Honorários iniciais'); await page.fill('#fn-valor', '4000');
   const optVal = await page.$eval('#fn-case option:has-text("Cliente Direto")', o => o.value); await page.selectOption('#fn-case', optVal); await page.waitForTimeout(100);
   await page.check('#fn-pp'); await page.waitForTimeout(100);
-  await page.fill('#fn-np', '4'); await page.fill('#fn-d1', '2026-07-05'); await page.press('#fn-d1', 'Tab'); await page.waitForTimeout(100);
+  // 1ª parcela 3 meses atrás (dia de amanhã): parcelas 2 e 3 já venceram, a 4ª vence amanhã — independe do dia em que o teste roda
+  const amanhaA = new Date(Date.now() - new Date().getTimezoneOffset() * 60000 + 86400000), d1A = new Date(amanhaA.getFullYear(), amanhaA.getMonth() - 3, amanhaA.getDate());
+  await page.fill('#fn-np', '4'); await page.fill('#fn-d1', `${d1A.getFullYear()}-${String(d1A.getMonth() + 1).padStart(2, '0')}-${String(d1A.getDate()).padStart(2, '0')}`); await page.press('#fn-d1', 'Tab'); await page.waitForTimeout(100);
   await page.click('#fn-save'); await page.waitForFunction(() => !document.querySelector('#fn-form'), null, { timeout: 8000 });
   check('4 parcelas gravadas e vinculadas ao processo: 1 realizada e 3 provisionadas', await page.evaluate(() => { const cid = [...window.__mockStore.cases.entries()].find(([, c]) => c.cliente === 'Cliente Direto')[0]; const f = [...window.__mockStore.finance.values()].filter(e => e.parcela); return f.length === 4 && f.filter(e => e.status === 'provisionado').length === 3 && f.every(e => e.grupoId && e.valor === 1000 && e.caseId === cid); }));
   // despesa recorrente no artifact (lote gravado documento a documento) → contas a pagar → reajuste dos seguintes → exclusão do grupo

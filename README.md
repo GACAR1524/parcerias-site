@@ -25,7 +25,8 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
 - **Controle de horário dos colaboradores**: advogados associados e estagiários registram entrada, volta do almoço e saída
   pelo celular; a presença é comprovada por **localização (GPS)** e pela **rede do escritório (IP)**,
   e o que vier de fora fica pendente para a administração aprovar. Espelho mensal, atrasos, faltas,
-  saldo de horas, ajustes e exportação.
+  saldo de horas, ajustes e exportação; feriados e dias sem expediente (nacionais do ano em um
+  clique, recessos, meio período) não contam falta.
 
 Há um login de **controle geral** (administração, que vê tudo e a visão geral segmentada por
 braço), um login para **cada advogado parceiro** (vê só os próprios processos), para **cada

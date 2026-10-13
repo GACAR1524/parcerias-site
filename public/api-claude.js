@@ -43,9 +43,9 @@
   }
 
   /* ---- ponto (versão artifact: só GPS; horário do aparelho) ---- */
-  const PONTO_DEFAULTS = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza' };
+  const PONTO_DEFAULTS = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza', feriados: [] };
   const pontoCfg = () => ({ ...PONTO_DEFAULTS, ...(st.pontoConfig || {}) });
-  const publicCfg = c => ({ endereco: c.endereco, lat: c.lat, lng: c.lng, raioM: c.raioM, toleranciaMin: c.toleranciaMin, exigirProva: c.exigirProva, fuso: c.fuso, temRede: false, configurado: c.lat != null });
+  const publicCfg = c => ({ endereco: c.endereco, lat: c.lat, lng: c.lng, raioM: c.raioM, toleranciaMin: c.toleranciaMin, exigirProva: c.exigirProva, fuso: c.fuso, feriados: c.feriados || [], temRede: false, configurado: c.lat != null });
   function haversine(lat1, lng1, lat2, lng2) { const R = 6371000, r = d => d * Math.PI / 180; const a = Math.sin(r(lat2 - lat1) / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(r(lng2 - lng1) / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(a)); }
   function officeNow(fuso) {
     try {
@@ -241,7 +241,7 @@
       return list;
     },
     async getPontoConfig() { return { config: pontoCfg(), meuIp: null }; },
-    async savePontoConfig(c) { const data = { ...PONTO_DEFAULTS, ...c, ips: [], atualizadoEm: new Date().toISOString() }; await guard(st.db.doc('config/ponto').set(data)); st.pontoConfig = data; return { config: data }; },
+    async savePontoConfig(c) { const data = { ...PONTO_DEFAULTS, ...c, ips: [], feriados: Array.isArray(c.feriados) ? c.feriados.map(f => ({ de: f.de, ate: f.ate || f.de, nome: String(f.nome || 'Sem expediente').slice(0, 80), turno: ['manha', 'tarde'].includes(f.turno) ? f.turno : 'dia' })) : [], atualizadoEm: new Date().toISOString() }; await guard(st.db.doc('config/ponto').set(data)); st.pontoConfig = data; return { config: data }; },
     async myIp() { return null; },
 
     async createContract(d) { const now = new Date().toISOString(); const ref = await guard(st.db.collection('contracts').add({ ...d, criadoEm: now, atualizadoEm: now })); return { id: ref.id }; },

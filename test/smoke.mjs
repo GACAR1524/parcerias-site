@@ -382,6 +382,17 @@ try {
   check('admin configura localização, raio, IP e tolerância', r.status === 200 && r.data.config.ips.includes(meuIp) && r.data.config.raioM === 150, r);
   r = await call('a', 'PUT', '/ponto/config', { lat: -2.4950 });
   check('latitude sem longitude é recusada', r.status === 400, r);
+  // feriados e dias sem expediente (ninguém recebe falta): guardados na configuração e visíveis para a equipe
+  r = await call('a', 'PUT', '/ponto/config', { lat: -2.4950, lng: -44.3020, raioM: 150, ips: [meuIp], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza', feriados: [{ de: '2026-12-25', nome: 'Natal' }, { de: '2026-12-22', ate: '2027-01-06', nome: 'Recesso de fim de ano' }, { de: '2026-02-18', nome: 'Quarta-feira de Cinzas', turno: 'manha' }, { de: '2026-12-25', nome: 'Natal de novo' }] });
+  check('feriados gravados, ordenados por data, sem duplicar o mesmo dia/turno; "até" assume o próprio dia', r.status === 200 && r.data.config.feriados.length === 3 && r.data.config.feriados[0].de === '2026-02-18' && r.data.config.feriados[0].turno === 'manha' && r.data.config.feriados[2].de === '2026-12-25' && r.data.config.feriados[2].ate === '2026-12-25' && r.data.config.feriados[1].ate === '2027-01-06', r);
+  r = await call('a', 'PUT', '/ponto/config', { lat: -2.4950, lng: -44.3020, ips: [meuIp], feriados: [{ de: '2026-12-25', ate: '2026-12-20', nome: 'errado' }] });
+  check('período sem expediente com fim antes do início é recusado', r.status === 400, r);
+  r = await call('a', 'PUT', '/ponto/config', { lat: -2.4950, lng: -44.3020, ips: [meuIp], feriados: [{ de: '2026-12-25', nome: 'Natal', turno: 'noite' }] });
+  check('turno de feriado desconhecido é recusado', r.status === 400, r);
+  r = await call('e', 'GET', '/bootstrap');
+  check('equipe recebe a lista de feriados na configuração pública (sem os IPs)', r.status === 200 && Array.isArray(r.data.pontoConfig.feriados) && r.data.pontoConfig.feriados.length === 3 && r.data.pontoConfig.ips === undefined, r.data.pontoConfig);
+  r = await call('a', 'PUT', '/ponto/config', { endereco: 'Escritório', lat: -2.4950, lng: -44.3020, raioM: 150, ips: [meuIp], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza' });
+  check('configuração sem a lista zera os feriados (a tela sempre reenvia a lista atual)', r.status === 200 && r.data.config.feriados.length === 0, r);
   r = await call('e', 'POST', '/ponto', { tipo: 'saida' });
   check('batida pela rede do escritório vale (rede_ok) mesmo sem GPS', r.status === 201 && r.data.entry.status === 'valido' && r.data.entry.redeOk === true && r.data.entry.gpsOk === false && r.data.entry.ip === meuIp, r);
   // só GPS: troca o IP autorizado por outro

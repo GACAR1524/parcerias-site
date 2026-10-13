@@ -16,9 +16,9 @@ const { pontoConfigInput, punchInput, adjustInput } = require('../validate');
 const router = express.Router();
 router.use(requireAuth);
 
-const DEFAULTS = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza' };
+const DEFAULTS = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza', feriados: [] };
 const cfg = () => ({ ...DEFAULTS, ...(getSetting('ponto', {}) || {}) });
-const publicCfg = c => ({ endereco: c.endereco, lat: c.lat, lng: c.lng, raioM: c.raioM, toleranciaMin: c.toleranciaMin, exigirProva: c.exigirProva, fuso: c.fuso, temRede: c.ips.length > 0, configurado: c.lat != null || c.ips.length > 0 });
+const publicCfg = c => ({ endereco: c.endereco, lat: c.lat, lng: c.lng, raioM: c.raioM, toleranciaMin: c.toleranciaMin, exigirProva: c.exigirProva, fuso: c.fuso, feriados: c.feriados || [], temRede: c.ips.length > 0, configurado: c.lat != null || c.ips.length > 0 });
 
 /* Data e hora atuais no fuso do escritório. */
 function officeNow(fuso) {

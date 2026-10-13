@@ -157,7 +157,8 @@ function pontoConfigInput(b) {
     ips: Array.from(new Set((Array.isArray(b.ips) ? b.ips : String(b.ips || '').split(/[\s,;]+/)).map(x => str(x, 64)).filter(Boolean))),
     toleranciaMin: b.toleranciaMin == null || b.toleranciaMin === '' ? 20 : Number(b.toleranciaMin),
     exigirProva: b.exigirProva == null ? true : !!b.exigirProva,
-    fuso: str(b.fuso || 'America/Fortaleza', 64)
+    fuso: str(b.fuso || 'America/Fortaleza', 64),
+    feriados: feriadosInput(b.feriados)
   };
   if ((c.lat == null) !== (c.lng == null)) fail('Informe latitude e longitude juntas.');
   if (!Number.isFinite(c.raioM) || c.raioM < 20 || c.raioM > 5000) fail('Raio inválido (20 a 5000 metros).');
@@ -165,6 +166,22 @@ function pontoConfigInput(b) {
   for (const ip of c.ips) if (!/^[0-9a-fA-F.:*]{3,64}$/.test(ip)) fail(`IP inválido: ${ip}`);
   try { new Intl.DateTimeFormat('en-US', { timeZone: c.fuso }); } catch { fail('Fuso horário inválido.'); }
   return c;
+}
+/* Feriados e dias sem expediente: { de, ate, nome, turno: dia | manha | tarde } — ninguém recebe falta nesses dias. */
+function feriadosInput(list) {
+  if (list == null || list === '') return [];
+  if (!Array.isArray(list)) fail('Lista de feriados inválida.');
+  if (list.length > 400) fail('No máximo 400 feriados/dias sem expediente.');
+  const out = [], seen = new Set();
+  for (const f of list) {
+    const de = dateISO(f?.de, 'início do feriado'), ate = f?.ate ? dateISO(f.ate, 'fim do feriado') : de;
+    if (ate < de) fail('O fim do período sem expediente não pode ser anterior ao início.');
+    const turno = str(f?.turno || 'dia', 10).toLowerCase();
+    if (!['dia', 'manha', 'tarde'].includes(turno)) fail('Turno do feriado inválido: use dia, manha ou tarde.');
+    const key = `${de}|${ate}|${turno}`; if (seen.has(key)) continue; seen.add(key);
+    out.push({ de, ate, nome: str(f?.nome, 80) || 'Sem expediente', turno });
+  }
+  return out.sort((a, b) => a.de.localeCompare(b.de) || a.ate.localeCompare(b.ate));
 }
 function punchInput(b) {
   const tipo = str(b.tipo, 10).toLowerCase();
