@@ -355,15 +355,9 @@ try {
   const rowCD = (await page.textContent('tr[data-id]:has-text("Cliente Direto")')).replace(/\u00a0/g, ' ');
   check('tabela de processos mostra a situação das parcelas de honorários iniciais (3/4 pagas, em dia)', /Iniciais em dia/.test(rowCD) && /3\/4 parcelas pagas/.test(rowCD) && /próxima/.test(rowCD));
   await page.click('[data-tab="finance"]'); await page.waitForSelector('.provbox');
-  // contabilidade: planilhas do mês e importação de uma planilha de recebimentos
-  await page.click('[data-act="contabilidade"]'); await page.waitForSelector('#ct-mes');
-  // mês atual: as parcelas 2 e 3 do Cliente Direto foram baixadas hoje (receitas realizadas de R$ 1.000 vinculadas ao processo)
+  // importar lançamentos: planilha de recebimentos do fechamento (CPF ignorado)
+  await page.click('[data-act="contabilidade"]'); await page.waitForSelector('#ct-file');
   const mesImp = hojeISO.slice(0, 7), mmImp = mesImp.slice(5, 7), aaImp = mesImp.slice(0, 4);
-  await page.selectOption('#ct-mes', mesImp); await page.waitForFunction(() => /Recebimentos simples/.test(document.querySelector('#ct-resumo')?.textContent || ''), null, { timeout: 8000 });
-  const ctRes = (await page.textContent('#ct-resumo')).replace(/\u00a0/g, ' ');
-  check('resumo do mês conta a parcela realizada e avisa o cliente sem CPF', /Recebimentos simples/.test(ctRes) && /Não informado/.test(ctRes) && /Cliente Direto/.test(ctRes) && (await page.getAttribute('#ct-dl-rec', 'href')).includes(`mes=${mesImp}&arquivo=recebimentos`));
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#ct-dl-rec')]);
-  check('download da planilha de recebimentos com o nome no padrão do contador', dl.suggestedFilename() === `Recebimentos_Honorarios_Mes_${mmImp}_${aaImp}.xlsx`);
   const wbImp = new ExcelJS.Workbook(); const wsImp = wbImp.addWorksheet('Recebimentos');
   [['NOME DO CLIENTE', 'CPF / CNPJ', 'VALOR RECEBIDO (R$)', 'TIPO DE COBRANÇA'], ['CLIENTE DIRETO', '123.456.789-09', 1000, 'Honorário Inicial'], ['NOVO CLIENTE IMPORTADO', '987.654.321-00', 800, 'Honorário Inicial'], ['TOTAL', '', { formula: 'SUM(C2:C3)', result: 1800 }, '']].forEach(r => wsImp.addRow(r));
   const bufImp = Buffer.from(await wbImp.xlsx.writeBuffer());
@@ -373,7 +367,7 @@ try {
   check('prévia casa o cliente com o processo, aponta a receita já existente e marca só o que é novo', /vinculada a 0803333-33/.test(prevTxt) && /já existe receita igual/.test(prevTxt) && /NOVO CLIENTE IMPORTADO/.test(prevTxt) && /cliente sem processo cadastrado/.test(prevTxt) && (await page.$$('input[data-ct]:checked')).length === 1 && (await page.inputValue('#ct-data')).startsWith(mesImp + '-'));
   await page.click('#ct-ok');
   await page.waitForFunction(() => !document.querySelector('#ct-file') && [...document.querySelectorAll('tr[data-fin]')].some(tr => tr.textContent.includes('NOVO CLIENTE IMPORTADO')), null, { timeout: 8000 });
-  check('receita importada aparece no Financeiro com o CPF na descrição', /987\.654\.321-00/.test(await page.textContent('tr[data-fin]:has-text("NOVO CLIENTE IMPORTADO")')));
+  check('receita importada aparece no Financeiro só com o nome (sem CPF)', !/987\.654\.321-00/.test(await page.textContent('tr[data-fin]:has-text("NOVO CLIENTE IMPORTADO")')) && !/987\.654\.321-00/.test(await page.textContent('#view')));
 
   await page.selectOption('#ff-sit', 'provisionado'); await page.waitForTimeout(200);
   check('filtro "só provisionados" lista a parcela futura (e as contas a pagar da recorrência)', (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).filter(t => /parcela/.test(t)).length === 1 && (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).every(t => /4\/4|A pagar/.test(t)));

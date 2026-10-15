@@ -156,8 +156,7 @@
     async updateContract(id, d) { await call('PUT', '/contracts/' + encodeURIComponent(id), d); await reload(); },
     async deleteContract(id) { await call('DELETE', '/contracts/' + encodeURIComponent(id)); await reload(); },
 
-    /* Contabilidade (site): resumo do mês, leitura de planilha enviada; as planilhas prontas são baixadas por link (api/contabilidade/planilhas). */
-    async contabResumo(mes) { return call('GET', '/contabilidade/resumo?mes=' + encodeURIComponent(mes)); },
+    /* Importar lançamentos (site): leitura de planilha do fechamento mensal / guias (CPF ignorado no servidor). */
     async lerPlanilha(nome, base64) { return call('POST', '/contabilidade/ler-planilha', { nome, base64 }); },
 
     async exportCSV(filename, csvText) {

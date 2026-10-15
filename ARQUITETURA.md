@@ -374,21 +374,22 @@ em vez da caixa.
 iniciais* vinculadas ao processo (`case_id`) e resume: pagas/vencidas/a vencer, total e próximo
 vencimento — pill "Iniciais em dia / em atraso / quitados" na tabela de processos e no cadastro.
 
-**Contabilidade (site, v14).** `cases.cpf_cnpj` (CPF/CNPJ do cliente, validado e formatado) e a rota
-`/api/contabilidade` (só administração, `exceljs`): `GET /resumo?mes=AAAA-MM` e `GET /planilhas?mes=
-&arquivo=recebimentos|alvaras` geram, a partir das **receitas realizadas** do mês, as duas planilhas
-que o escritório envia ao contador no padrão já usado (cabeçalho azul `#1F4E78` com texto branco,
-bordas, filtro, 1ª linha congelada, moeda `R$ #,##0.00`, TOTAL com fórmula, nomes
-`Recebimentos_Honorarios_Mes_MM_AAAA.xlsx` / `Alvaras_Judiciais_Mes_MM_AAAA.xlsx`). Recebimentos
-simples = honorários iniciais ("Honorário Inicial") e êxito/parceria/consultoria ("Honorário
-Final"); alvarás = receitas *Alvará de honorários finais*, com bruto = condenação total do processo,
-a declarar = honorários recebidos, repassado = bruto − a declarar. `POST /ler-planilha
-{ nome, base64 }` lê uma planilha nesses dois formatos (pula TOTAL/OBSERVAÇÃO, aceita valores em
-texto "R$ 1.234,56", formata número CNJ de 20 dígitos, confere bruto − repassado = a declarar) e a
-tela "Contabilidade" do Financeiro monta a prévia: alvará casa com o processo pelo número (processo
-em andamento → marca como recebido e lança; já lançado → nada a fazer; sem processo → receita
-avulsa), recebimento casa pelo nome do cliente e aponta receita igual já existente no mês; só o que
-for confirmado é gravado. Limite do JSON subiu para 6 MB por causa do base64.
+**Importar lançamentos (site, só administração).** O fechamento mensal para o contador é feito
+fora do sistema (o sistema não guarda dados sensíveis de clientes — CPF/CNPJ fica fora, por
+decisão do escritório). A rota `POST /api/contabilidade/ler-planilha { nome, base64 }` (`exceljs`,
+JSON até 6 MB) apenas **lê** três formatos de planilha e devolve as linhas normalizadas, pulando
+TOTAL/OBSERVAÇÃO, aceitando valores em texto "R$ 1.234,56", formatando número CNJ de 20 dígitos e
+**ignorando a coluna de CPF/CNPJ**: *recebimentos* (NOME | CPF | VALOR RECEBIDO | TIPO DE
+COBRANÇA), *alvarás* (Nº DO PROCESSO | NOME | CPF | BRUTO | REPASSADO | A DECLARAR | OBSERVAÇÃO,
+com conferência bruto − repassado = a declarar) e *lançamentos* (DATA | TIPO | CATEGORIA |
+DESCRIÇÃO | VALOR | VENCIMENTO — guias de imposto). A tela "Importar lançamentos" (Financeiro)
+monta a prévia e grava pelos endpoints normais, só o que for confirmado: alvará casa com o
+processo pelo número e **encerra o processo** (julgado + recebido, `valor_recebido` = a declarar,
+`valor_condenacao` = bruto, receita + repasse); processo inexistente é **criado** só do escritório
+já encerrado (para o escritório ajustar depois); recebimento casa pelo nome do cliente, aponta
+receita igual já existente no mês e entra como *Honorários iniciais* (ou *de êxito*) vinculada ao
+processo; guia com vencimento futuro entra como despesa **a pagar** (provisionada), vencida ou sem
+vencimento como realizada. A migração 14 ficou reservada (sem efeito).
 
 **"Meu financeiro" (parceiro e associado, só no site).** O bootstrap de quem não é administração
 nem estagiário traz apenas os lançamentos **vinculados aos próprios processos** (`finance_entries
@@ -484,7 +485,7 @@ Quando um processo passa a **Finalizado e recebido**:
 - No site a regra roda no servidor (`settleFinance`, em `routes/cases.js`, dentro da mesma transação); no artifact, no adaptador `api-claude.js`, que só consegue gravar em `finance` quando o usuário é o proprietário.
 
 Esquema versionado: `schema_version` guarda a versão atual e `db.js` aplica migrações numeradas
-ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`; v12, `partners.admissao`; v13, `cases.parent_id`; v14, `cases.cpf_cnpj`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
+ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`; v12, `partners.admissao`; v13, `cases.parent_id`; v14, reservada). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
 
 ## 4. API REST
 

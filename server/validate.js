@@ -24,14 +24,6 @@ function password(p, min = 8) {
   return s;
 }
 
-/* CPF/CNPJ do cliente: aceita com ou sem pontuação e devolve formatado; vazio é permitido. */
-function cpfCnpj(v) {
-  const d = String(v ?? '').replace(/\D/g, '');
-  if (!d) return '';
-  if (d.length === 11) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
-  if (d.length === 14) return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
-  fail('CPF/CNPJ inválido: use 11 dígitos (CPF) ou 14 (CNPJ).');
-}
 function caseInput(b) {
   const natureza = str(b.natureza || 'judicial', 20).toLowerCase();
   if (natureza !== 'judicial' && natureza !== 'administrativo') fail('Natureza inválida: use judicial ou administrativo.');
@@ -63,7 +55,6 @@ function caseInput(b) {
     natureza, fase, resultado,
     numeroProcesso: natureza === 'judicial' ? cnj(str(b.numeroProcesso, 40)) : str(b.numeroProcesso, 60),
     cliente: str(b.cliente, 160),
-    cpfCnpj: cpfCnpj(b.cpfCnpj),
     tipoAcao: str(b.tipoAcao, 120),
     dataProtocolo: dateISO(b.dataProtocolo, 'data do protocolo'),
     honorariosPretendidos: money(b.honorariosPretendidos ?? 0),
@@ -268,4 +259,4 @@ function financeInput(b) {
   return f;
 }
 
-module.exports = { ValidationError, caseInput, partnerInput, contractInput, creditInput, financeInput, pontoConfigInput, punchInput, adjustInput, jornadaInput, JORNADA_PADRAO, PONTO_TIPOS, PONTO_NOMES, username, password, normUser, cnj, cpfCnpj };
+module.exports = { ValidationError, caseInput, partnerInput, contractInput, creditInput, financeInput, pontoConfigInput, punchInput, adjustInput, jornadaInput, JORNADA_PADRAO, PONTO_TIPOS, PONTO_NOMES, username, password, normUser, cnj };

@@ -1,7 +1,13 @@
+# Logs dos contêineres limitados (10 MB × 3 arquivos cada) para o disco do servidor não encher com o tempo.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   app:
     build: .
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     environment:
       - DB_PATH=/data/parcerias.db
@@ -16,6 +22,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logging
     depends_on:
       - app
     env_file: .env
