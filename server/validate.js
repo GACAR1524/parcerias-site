@@ -88,7 +88,11 @@ function caseInput(b) {
     c.sucumbRecebido = b.sucumbRecebido == null || b.sucumbRecebido === '' ? Math.min(c.honorariosSucumbenciais, c.valorRecebido) : money(b.sucumbRecebido);
     if (c.sucumbRecebido > c.valorRecebido) fail('Os sucumbenciais recebidos não podem ser maiores que o total recebido.');
     c.dataRecebimento = dateISO(b.dataRecebimento, 'data do recebimento');
-    c.fluxoRecebimento = b.fluxoRecebimento === 'parceiro' ? 'parceiro' : 'escritorio';
+    // escritorio = recebemos tudo e repassamos; parceiro = ele recebeu e já repassou a nossa parte;
+    // parceiro_pendente = ele recebeu e ainda nos deve a nossa parte (vira receita a receber até o repasse chegar)
+    c.fluxoRecebimento = ['parceiro', 'parceiro_pendente'].includes(b.fluxoRecebimento) ? b.fluxoRecebimento : 'escritorio';
+    // data em que o repasse do parceiro chegou (só usada ao confirmar um repasse pendente; não é coluna do processo)
+    c.dataRepasse = b.dataRepasse ? dateISO(b.dataRepasse, 'data do repasse') : null;
   }
   if (resultado === 'perdido') c.dataEncerramento = b.dataEncerramento ? dateISO(b.dataEncerramento, 'data do encerramento') : new Date().toISOString().slice(0, 10);
   if (c.temCorretor) {

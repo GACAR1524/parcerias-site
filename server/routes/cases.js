@@ -45,7 +45,10 @@ function financeEntriesFor(c, partner) {
   const divisao = sucRec > 0 ? `${c.pctParceiro}% de ${brl(contrRec)} (contratuais) + ${pS}% de ${brl(sucRec)} (sucumbenciais).` : '';
   const categoria = alvara ? 'Alvará de honorários finais' : (associado ? 'Honorários de êxito' : 'Honorários de parceria');
   const out = [];
-  if (!associado && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${partnerNome})`, valor: nossa, observacoes: sucRec > 0 ? `Total recebido ${brl(recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '' });
+  const obsParte = sucRec > 0 ? `Total recebido ${brl(recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '';
+  if (!associado && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${partnerNome})`, valor: nossa, observacoes: obsParte });
+  // parceiro recebeu e ainda não repassou: a nossa parte entra como receita A RECEBER (provisionada) até o repasse chegar
+  else if (!associado && c.fluxoRecebimento === 'parceiro_pendente') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repasse de ${partnerNome})`, valor: nossa, status: 'provisionado', vencimento: c.dataRecebimento, observacoes: obsParte });
   else {
     out.push({ tipo: 'receita', categoria, descricao: `${ref} (valor total recebido)`, valor: round2(recebido), observacoes: composicao });
     if (associado) out.push({ tipo: 'despesa', categoria: 'Bonificação de associado', descricao: `Bonificação de ${partnerNome} — ${ref}`, valor: parceiro, associadoId: partner.id, observacoes: divisao });
@@ -59,25 +62,44 @@ function financeEntriesFor(c, partner) {
  *  - deixou de estar "recebido": remove os lançamentos vinculados (se havia) → 'nao'
  *  - está "recebido" e ainda não lançado: admin com lancarFinanceiro=true → grava e marca 'lancado';
  *    caso contrário fica 'pendente' (aguardando confirmação do escritório)
+ *  - já lançado e o admin muda "quem recebeu" de "parceiro ainda não repassou" para "parceiro repassou":
+ *    a receita a receber vira realizada na data do repasse (e o caminho inverso a devolve para "a receber").
+ *    O parceiro não confirma o próprio repasse: depois de lançado, a escolha dele é ignorada.
  * Deve rodar dentro da transação que grava o processo.
  */
+/* Categorias que o próprio recebimento gera (outros lançamentos vinculados ao processo, como honorários iniciais, não são mexidos). */
+const GERADAS = "('Alvará de honorários finais','Honorários de êxito','Honorários de parceria','Repasse a parceiro','Bonificação de associado')";
+function insertEntries(c, id, req) {
+  const partner = c.parceiroId ? partnerById.get(c.parceiroId) : null, now = nowISO();
+  if (partner?.tipo === 'associado' || !partner) c.fluxoRecebimento = 'escritorio';
+  for (const e of financeEntriesFor(c, partner)) {
+    db.prepare(`INSERT INTO finance_entries (id, tipo, categoria, descricao, valor, data, observacoes, case_id, associado_id, status, vencimento, criado_por, atualizado_por, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(uuid(), e.tipo, e.categoria, e.descricao, e.valor, c.dataRecebimento, e.observacoes || '', id, e.associadoId || null, e.status || 'realizado', e.vencimento || null, req.user.id, req.user.id, now, now);
+  }
+  return now;
+}
 function settleFinance({ cur, c, id, req }) {
   const prev = cur?.financeiro_status || 'nao';
   let status = prev, em = cur?.financeiro_em || null;
   if (c.resultado !== 'recebido') {
-    if (prev === 'lancado') db.prepare('DELETE FROM finance_entries WHERE case_id = ?').run(id);
+    if (prev === 'lancado') db.prepare(`DELETE FROM finance_entries WHERE case_id = ? AND categoria IN ${GERADAS}`).run(id);
     status = 'nao'; em = null;
   } else if (prev !== 'lancado') {
-    if (req.user.role === 'admin' && req.body.lancarFinanceiro === true) {
-      const partner = c.parceiroId ? partnerById.get(c.parceiroId) : null;
-      const now = nowISO();
-      if (partner?.tipo === 'associado' || !partner) c.fluxoRecebimento = 'escritorio';
-      for (const e of financeEntriesFor(c, partner)) {
-        db.prepare(`INSERT INTO finance_entries (id, tipo, categoria, descricao, valor, data, observacoes, case_id, associado_id, criado_por, atualizado_por, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(uuid(), e.tipo, e.categoria, e.descricao, e.valor, c.dataRecebimento, e.observacoes || '', id, e.associadoId || null, req.user.id, req.user.id, now, now);
-      }
-      status = 'lancado'; em = now;
-    } else status = 'pendente';
+    if (req.user.role === 'admin' && req.body.lancarFinanceiro === true) { em = insertEntries(c, id, req); status = 'lancado'; }
+    else status = 'pendente';
+  } else {
+    const antes = cur.fluxo_recebimento || 'escritorio';
+    if (req.user.role !== 'admin') c.fluxoRecebimento = antes;
+    else if (antes === 'parceiro_pendente' && c.fluxoRecebimento === 'parceiro') {
+      const data = c.dataRepasse || nowISO().slice(0, 10);
+      db.prepare("UPDATE finance_entries SET status = 'realizado', data = ?, atualizado_por = ?, atualizado_em = ? WHERE case_id = ? AND tipo = 'receita' AND status = 'provisionado' AND categoria IN " + GERADAS).run(data, req.user.id, nowISO(), id);
+    } else if (antes === 'parceiro' && c.fluxoRecebimento === 'parceiro_pendente') {
+      db.prepare("UPDATE finance_entries SET status = 'provisionado', vencimento = COALESCE(vencimento, data), atualizado_por = ?, atualizado_em = ? WHERE case_id = ? AND tipo = 'receita' AND status = 'realizado' AND categoria IN " + GERADAS).run(req.user.id, nowISO(), id);
+    } else if (antes !== c.fluxoRecebimento) {
+      // escritório ↔ parceiro: os lançamentos mudam de natureza (total + repasse × só a nossa parte) → refaz os gerados
+      db.prepare(`DELETE FROM finance_entries WHERE case_id = ? AND categoria IN ${GERADAS}`).run(id);
+      em = insertEntries(c, id, req);
+    }
   }
   return { status, em };
 }

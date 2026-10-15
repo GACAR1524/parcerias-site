@@ -195,6 +195,26 @@ try {
   await page.click('[data-tab="ponto"]'); await page.waitForSelector('.espelho', { timeout: 8000 });
   check('admin vê a entrada do estagiário na aba Ponto', /Pedro Lima/.test(await page.textContent('.espelho')) && /GPS/.test(await page.textContent('.espelho')));
 
+  // parceiro recebeu e ainda não repassou a parte do escritório → receita a receber; baixa em Créditos provisionados
+  await page.click('[data-tab="partners"]'); await page.click('[data-act="new-partner"]'); await page.waitForSelector('#p-form');
+  await page.fill('#p-nome', 'Mariana Lopes'); await page.press('#p-nome', 'Tab'); await page.click('#p-save'); await page.waitForSelector('#cred-ok', { timeout: 8000 }); await page.click('#cred-ok');
+  await page.waitForFunction(() => [...document.querySelectorAll('.pcard')].some(c => c.textContent.includes('Mariana Lopes')), null, { timeout: 8000 });
+  await page.click('[data-tab="cases"]'); await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-partner', await page.$eval('#c-partner', s => [...s.options].find(o => /Mariana/.test(o.textContent)).value));
+  await page.fill('#c-num', '08031313120268170001'); await page.fill('#c-cliente', 'Cliente Repasse'); await page.fill('#c-tipo', 'Ação contra casa de apostas'); await page.fill('#c-hon', '2000');
+  await page.check('#c-res-rec'); await page.waitForSelector('#c-lancar');
+  await page.selectOption('#c-fluxo', 'parceiro_pendente'); await page.waitForTimeout(100);
+  check('artifact: prévia mostra a parte do escritório como "a receber — repasse pendente"', /repasse pendente/.test(await page.textContent('#fin-box')));
+  await page.click('#c-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Cliente Repasse') && tr.textContent.includes('repasse do parceiro pendente')), null, { timeout: 8000 });
+  check('artifact: receita de R$ 1.000 gravada provisionada, vinculada ao processo', await page.evaluate(() => { const f = [...window.__mockStore.finance.values()].filter(e => e.descricao && /Cliente Repasse/.test(e.descricao)); return f.length === 1 && f[0].tipo === 'receita' && f[0].valor === 1000 && f[0].status === 'provisionado'; }));
+  await page.click('[data-tab="finance"]'); await page.waitForSelector('.provbox');
+  check('artifact: Financeiro avisa o repasse pendente da parceira', /Repasses pendentes de parceiros/.test(await page.textContent('#view')) && /Mariana Lopes/.test(await page.textContent('#view')));
+  await page.click('[data-act="open-prov"]'); await page.waitForSelector('.prov-row:has-text("Repasse de Mariana Lopes")');
+  await page.check('.prov-row:has-text("Repasse de Mariana Lopes") input'); await page.click('#pv-ok');
+  await page.waitForFunction(() => !document.querySelector('#pv-ok') && !/Repasses pendentes/.test(document.querySelector('#view').textContent), null, { timeout: 8000 });
+  check('artifact: confirmar o repasse realiza a receita e muda o processo para "parceiro repassou"', await page.evaluate(() => { const f = [...window.__mockStore.finance.values()].find(e => e.descricao && /Cliente Repasse/.test(e.descricao)); const c = [...window.__mockStore.cases.values()].find(x => x.cliente === 'Cliente Repasse'); return f && f.status === 'realizado' && c && c.fluxoRecebimento === 'parceiro' && c.dataRepasse === undefined; }));
+
   // sessão persiste e sair
   await page.reload(); await page.waitForSelector('#tabs', { timeout: 8000 });
   check('sessão do artifact persiste ao recarregar', true);

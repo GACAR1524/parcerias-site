@@ -143,20 +143,37 @@
     async createCase(d, opts = {}) {
       const now = new Date().toISOString(), admin = st.session.role === 'admin';
       const fin = d.resultado === 'recebido' ? 'pendente' : 'nao';
-      const ref = await guard(st.db.collection('cases').add({ ...d, financeiroStatus: fin, financeiroEm: null, criadoPor: admin ? 'admin' : st.session.partnerId, criadoEm: now, atualizadoEm: now }));
+      const doc = { ...d, financeiroStatus: fin, financeiroEm: null, criadoPor: admin ? 'admin' : st.session.partnerId, criadoEm: now, atualizadoEm: now }; delete doc.dataRepasse;
+      const ref = await guard(st.db.collection('cases').add(doc));
       if (admin && d.resultado === 'recebido' && opts.lancarFinanceiro && opts.lancamentos?.length) await this._postFinance(ref.id, opts.lancamentos);
       return { id: ref.id };
     },
     async updateCase(id, d, opts = {}) {
       const now = new Date().toISOString(), admin = st.session.role === 'admin';
       const patch = { ...d, atualizadoEm: now, atualizadoPor: admin ? 'admin' : st.session.partnerId };
-      const prev = opts.statusAtual || 'nao';
+      delete patch.dataRepasse; // só serve para a baixa abaixo; não é campo do processo
+      const prev = opts.statusAtual || 'nao', fluxoAntes = opts.fluxoAtual || 'escritorio';
+      // só os lançamentos que o próprio recebimento gera (honorários iniciais e outros vinculados ao processo ficam)
+      const GERADAS = ['Alvará de honorários finais', 'Honorários de êxito', 'Honorários de parceria', 'Repasse a parceiro', 'Bonificação de associado'];
+      const gerados = async () => (await guard(st.db.collection('finance').where('caseId', '==', id).get())).docs.filter(doc => GERADAS.includes(doc.data().categoria));
+      let refazer = false;
       if (d.resultado !== 'recebido') {
-        if (prev === 'lancado' && admin) { const q = await guard(st.db.collection('finance').where('caseId', '==', id).get()); for (const doc of q.docs) await guard(st.db.doc('finance/' + doc.id).delete()); }
+        if (prev === 'lancado' && admin) for (const doc of await gerados()) await guard(st.db.doc('finance/' + doc.id).delete());
         patch.financeiroStatus = 'nao'; patch.financeiroEm = null;
       } else if (prev !== 'lancado') patch.financeiroStatus = 'pendente';
+      else if (!admin) patch.fluxoRecebimento = fluxoAntes; // o parceiro não confirma o próprio repasse
+      else if (fluxoAntes === 'parceiro_pendente' && d.fluxoRecebimento === 'parceiro') {
+        // repasse do parceiro chegou: a receita "a receber" vira realizada na data do repasse
+        for (const doc of await gerados()) if (doc.data().tipo === 'receita' && doc.data().status === 'provisionado') await guard(st.db.doc('finance/' + doc.id).update({ status: 'realizado', data: d.dataRepasse || now.slice(0, 10), atualizadoEm: now }));
+      } else if (fluxoAntes === 'parceiro' && d.fluxoRecebimento === 'parceiro_pendente') {
+        for (const doc of await gerados()) if (doc.data().tipo === 'receita' && doc.data().status !== 'provisionado') await guard(st.db.doc('finance/' + doc.id).update({ status: 'provisionado', vencimento: doc.data().vencimento || doc.data().data, atualizadoEm: now }));
+      } else if (fluxoAntes !== (d.fluxoRecebimento || 'escritorio') && opts.lancamentos?.length) {
+        // escritório ↔ parceiro: os lançamentos mudam de natureza → refaz os gerados
+        for (const doc of await gerados()) await guard(st.db.doc('finance/' + doc.id).delete());
+        refazer = true;
+      }
       await guard(st.db.doc('cases/' + id).update(patch));
-      if (admin && d.resultado === 'recebido' && prev !== 'lancado' && opts.lancarFinanceiro && opts.lancamentos?.length) await this._postFinance(id, opts.lancamentos);
+      if (admin && d.resultado === 'recebido' && ((prev !== 'lancado' && opts.lancarFinanceiro) || refazer) && opts.lancamentos?.length) await this._postFinance(id, opts.lancamentos);
     },
     async _postFinance(caseId, lancamentos) {
       const now = new Date().toISOString();

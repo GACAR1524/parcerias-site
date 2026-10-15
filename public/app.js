@@ -279,7 +279,10 @@ function financeEntriesFor(c) {
   const divisao = m.sucRec > 0 ? `${num(c.pctParceiro)}% de ${brl(m.contrRec)} (contratuais) + ${pctSucumbOf(c)}% de ${brl(m.sucRec)} (sucumbenciais).` : '';
   const categoria = alvara ? 'Alvará de honorários finais' : (assoc ? 'Honorários de êxito' : 'Honorários de parceria');
   const out = [];
-  if (!assoc && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${p})`, valor: round2(m.nossaRecebida), data: c.dataRecebimento, observacoes: m.sucRec > 0 ? `Total recebido ${brl(m.recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '' });
+  const obsParte = m.sucRec > 0 ? `Total recebido ${brl(m.recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '';
+  if (!assoc && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${p})`, valor: round2(m.nossaRecebida), data: c.dataRecebimento, observacoes: obsParte });
+  // parceiro recebeu e ainda não repassou: a nossa parte fica como receita A RECEBER (provisionada) até o repasse chegar
+  else if (!assoc && c.fluxoRecebimento === 'parceiro_pendente') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repasse de ${p})`, valor: round2(m.nossaRecebida), data: c.dataRecebimento, status: 'provisionado', vencimento: c.dataRecebimento, observacoes: obsParte });
   else {
     out.push({ tipo: 'receita', categoria, descricao: `${ref} (valor total recebido)`, valor: round2(m.recebido), data: c.dataRecebimento, observacoes: composicao });
     if (assoc) out.push({ tipo: 'despesa', categoria: 'Bonificação de associado', descricao: `Bonificação de ${p} — ${ref}`, valor: round2(m.parceiroRecebido), data: c.dataRecebimento, associadoId: pObj.id, observacoes: divisao });
@@ -288,6 +291,14 @@ function financeEntriesFor(c) {
   return out.filter(e => e.valor > 0);
 }
 const finPendentes = () => S.cases.filter(c => resultadoOf(c) === 'recebido' && c.financeiroStatus === 'pendente');
+/* Repasses que parceiros ainda devem ao escritório: processos recebidos pelo parceiro sem o repasse da nossa parte. */
+const repPendente = c => resultadoOf(c) === 'recebido' && c.fluxoRecebimento === 'parceiro_pendente' && !isOffice(c);
+const repPendentes = () => S.cases.filter(repPendente);
+function repPorParceiro() {
+  const by = new Map();
+  for (const c of repPendentes()) { const k = c.parceiroId || '', v = by.get(k) || { nome: partnerName(c.parceiroId), n: 0, valor: 0 }; v.n++; v.valor += metrics(c).nossaRecebida; by.set(k, v); }
+  return [...by.values()].sort((a, b) => b.valor - a.valor);
+}
 function inPeriod(c, period) {
   if (period === 'all') return true;
   const d = c.dataProtocolo; if (!d) return false;
@@ -312,6 +323,7 @@ function filtered(useAll) {
       if (f.status === 'pendente' && res !== 'em_andamento') return false;
       if (f.status === 'perdido' && res !== 'perdido') return false;
       if (f.status === 'fin_pendente' && !(res === 'recebido' && c.financeiroStatus === 'pendente')) return false;
+      if (f.status === 'rep_pendente' && !repPendente(c)) return false;
       if (f.status === 'corretor' && !(c.temCorretor && !c.corretorPago)) return false;
       if (q) {
         const hay = [c.numeroProcesso, c.cliente, c.tipoAcao, partnerName(c.parceiroId), c.nomeCorretor, c.observacoes].join(' ').toLowerCase();
@@ -463,6 +475,7 @@ function renderOverviewSeg() {
         <div><span class="lbl">Créditos</span><b>${brlShort(a.creditos)}</b><small>${pct(a.creditos, a.total)}% das receitas</small></div>
       </div>
     </section>
+    ${repBanner()}
     ${provisionedBox(true)}
     ${payablesBox(true)}
     <div class="card" style="margin-bottom:12px"><div class="card-h"><h2>Receitas por braço, mês a mês</h2><small>últimos 12 meses · valores realizados</small></div><div class="chart" id="chart-arms"></div></div>
@@ -535,6 +548,12 @@ function finBanner() {
   const n = finPendentes().length, v = finPendentes().reduce((s, c) => s + metrics(c).recebido, 0);
   return `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>${n} recebimento${n === 1 ? '' : 's'}</b> informado${n === 1 ? '' : 's'} pelos parceiros (${brl(v)}) aguardam lançamento no Financeiro.</span><button class="btn btn-sm btn-primary" type="button" data-act="go-fin-pending">Ver e lançar</button></div>`;
 }
+/* Honorários que parceiros receberam e ainda não repassaram ao escritório, por parceiro. */
+function repBanner() {
+  const por = repPorParceiro(); if (!por.length) return '';
+  const n = por.reduce((s, x) => s + x.n, 0), v = por.reduce((s, x) => s + x.valor, 0);
+  return `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>Repasses pendentes de parceiros: ${brl(v)}</b> em ${n} processo${n === 1 ? '' : 's'} — ${esc(por.map(x => `${x.nome} ${brl(x.valor)}`).join(' · '))}. A baixa é feita em <b>Créditos provisionados</b> ou no próprio processo.</span><button class="btn btn-sm btn-primary" type="button" data-act="go-rep-pending">Ver processos</button></div>`;
+}
 function casesTable(list) {
   const admin = isAdmin();
   if (!S.loaded) return `<div class="empty"><b>Carregando…</b></div>`;
@@ -548,7 +567,7 @@ function casesTable(list) {
     <td>${depth ? '<span class="link-arm" aria-hidden="true">↳</span>' : ''}${natTag(c)}${par ? `<span class="tag lnk" title="Vinculado ao processo ${esc(numFmt(par))}">VINCULADO</span>` : ''} <span class="mono">${esc(numFmt(c))}</span><span class="sub">${esc(c.tipoAcao || '')}${par ? ` · ${depth ? 'do' : 'vinculado ao'} processo ${esc(numFmt(par))}${depth ? '' : ' (' + esc(par.tipoAcao || '') + ')'}` : ''}${kids.length ? ` · <b>${kids.length} vinculado${kids.length === 1 ? '' : 's'}</b>: ${esc(kids.map(k => k.tipoAcao || numFmt(k)).join(', '))}` : ''}</span></td>
     <td>${esc(c.cliente)}${admin ? `<span class="sub">${isOffice(c) ? 'Só do escritório' : esc(partnerName(c.parceiroId))}${num(c.honorariosIniciais) > 0 ? ` · iniciais ${brlShort(c.honorariosIniciais)}${hiLancados(c.id).length ? '' : ' <b style="color:var(--warn)" title="Honorários iniciais ainda não lançados no Financeiro">lançar</b>'}` : ''}</span>` : (num(c.honorariosIniciais) > 0 ? `<span class="sub">iniciais ${brlShort(c.honorariosIniciais)}</span>` : '')}${h ? `<span class="sub">${hiPill(h)} <small>${esc(hiDesc(h))}</small></span>` : ''}</td>
     <td class="num">${brl(m.pretendido)}<span class="sub">${baseDesc(c)} · lead ${brl(m.custoLead)}</span></td>
-    <td>${statusPill(c)}${resultadoOf(c) === 'recebido' ? `<span class="sub">${brl(m.recebido)}${m.sucRec > 0 ? ` (${brlShort(m.contrRec)} contratuais + ${brlShort(m.sucRec)} sucumb.)` : ''} em ${fmtDate(c.dataRecebimento)}${admin ? (c.financeiroStatus === 'lancado' ? ' · no financeiro' : c.financeiroStatus === 'pendente' ? ' · <b style="color:var(--warn)">lançar no financeiro</b>' : '') : ''}</span>` : resultadoOf(c) === 'perdido' ? `<span class="sub">encerrado em ${fmtDate(c.dataEncerramento)}</span>` : `<span class="sub">${faseOf(c) === 'julgado' ? 'julgado, aguardando' : 'em curso'}</span>`}</td>
+    <td>${statusPill(c)}${resultadoOf(c) === 'recebido' ? `<span class="sub">${brl(m.recebido)}${m.sucRec > 0 ? ` (${brlShort(m.contrRec)} contratuais + ${brlShort(m.sucRec)} sucumb.)` : ''} em ${fmtDate(c.dataRecebimento)}${admin ? (c.financeiroStatus === 'lancado' ? ' · no financeiro' : c.financeiroStatus === 'pendente' ? ' · <b style="color:var(--warn)">lançar no financeiro</b>' : '') : ''}${repPendente(c) ? ` · <b style="color:var(--warn)" title="O parceiro recebeu e ainda não repassou a parte do escritório">${admin ? 'repasse do parceiro pendente' : 'repasse ao escritório pendente'}: ${brlShort(m.nossaRecebida)}</b>` : ''}</span>` : resultadoOf(c) === 'perdido' ? `<span class="sub">encerrado em ${fmtDate(c.dataEncerramento)}</span>` : `<span class="sub">${faseOf(c) === 'julgado' ? 'julgado, aguardando' : 'em curso'}</span>`}</td>
     <td class="num">${isOffice(c) ? '100% escritório' : `${num(c.pctParceiro)}% / ${num(c.pctNosso)}%${m.sucumb > 0 || m.sucRec > 0 ? ` <small title="Divisão dos honorários sucumbenciais">(sucumb. ${num(pctSucumbOf(c))}% / ${Math.round((100 - pctSucumbOf(c)) * 100) / 100}%)</small>` : ''}`}<span class="sub">${isOffice(c) ? brlShort(m.nossaParte) : brlShort(m.parteParceiro) + ' / ' + brlShort(m.nossaParte)}</span></td>
     <td>${c.temCorretor ? (c.corretorPago ? `<span class="pill ok">Pago</span>` : `<span class="pill warn">A pagar</span>`) + `<span class="sub">${brl(c.valorCorretor)}${c.nomeCorretor ? ' · ' + esc(c.nomeCorretor) : ''}</span>` : '<span class="muted">—</span>'}</td>
   </tr>`; }).join('');
@@ -572,7 +591,7 @@ function renderCases() {
       <select id="f-nat" data-f="natureza" aria-label="Natureza"><option value="">Judiciais e administrativos</option><option value="judicial" ${S.f.natureza === 'judicial' ? 'selected' : ''}>Só judiciais</option><option value="administrativo" ${S.f.natureza === 'administrativo' ? 'selected' : ''}>Só administrativos</option></select>
       <select id="f-tipo" data-f="tipo" aria-label="Tipo de ação"><option value="">Todos os tipos</option>${tipos.map(x => `<option ${S.f.tipo === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
       <select id="f-fase" data-f="fase" aria-label="Fase"><option value="">Em curso e julgados</option><option value="em_curso" ${S.f.fase === 'em_curso' ? 'selected' : ''}>Só em curso</option><option value="julgado" ${S.f.fase === 'julgado' ? 'selected' : ''}>Só julgados</option></select>
-      <select id="f-status" data-f="status" aria-label="Situação"><option value="">Qualquer situação</option><option value="pendente" ${S.f.status === 'pendente' ? 'selected' : ''}>Em andamento</option><option value="recebido" ${S.f.status === 'recebido' ? 'selected' : ''}>Recebidos</option><option value="perdido" ${S.f.status === 'perdido' ? 'selected' : ''}>Perdidos</option>${admin ? `<option value="fin_pendente" ${S.f.status === 'fin_pendente' ? 'selected' : ''}>Recebidos sem lançar no financeiro</option>` : ''}<option value="corretor" ${S.f.status === 'corretor' ? 'selected' : ''}>Corretor a pagar</option></select>
+      <select id="f-status" data-f="status" aria-label="Situação"><option value="">Qualquer situação</option><option value="pendente" ${S.f.status === 'pendente' ? 'selected' : ''}>Em andamento</option><option value="recebido" ${S.f.status === 'recebido' ? 'selected' : ''}>Recebidos</option><option value="perdido" ${S.f.status === 'perdido' ? 'selected' : ''}>Perdidos</option>${admin ? `<option value="fin_pendente" ${S.f.status === 'fin_pendente' ? 'selected' : ''}>Recebidos sem lançar no financeiro</option>` : ''}<option value="rep_pendente" ${S.f.status === 'rep_pendente' ? 'selected' : ''}>${admin ? 'Repasse do parceiro pendente' : 'Repasse ao escritório pendente'}</option><option value="corretor" ${S.f.status === 'corretor' ? 'selected' : ''}>Corretor a pagar</option></select>
       ${periodSelect('f-period')}
     </div>
     ${casesTable(list)}
@@ -614,24 +633,27 @@ function renderMyFinance() {
   const minhaCat = assoc ? 'Bonificação de associado' : 'Repasse a parceiro';
   const recebidoProc = real.filter(e => e.tipo === 'receita' && e.categoria !== 'Honorários iniciais').reduce((s, e) => s + num(e.valor), 0);
   const minhaParte = real.filter(e => e.tipo === 'despesa' && e.categoria === minhaCat).reduce((s, e) => s + num(e.valor), 0);
-  const repassadoPorMim = S.cases.filter(c => resultadoOf(c) === 'recebido' && c.fluxoRecebimento === 'parceiro' && c.financeiroStatus === 'lancado').reduce((s, c) => s + metrics(c).parceiroRecebido, 0);
+  const repassadoPorMim = S.cases.filter(c => resultadoOf(c) === 'recebido' && ['parceiro', 'parceiro_pendente'].includes(c.fluxoRecebimento) && c.financeiroStatus === 'lancado').reduce((s, c) => s + metrics(c).parceiroRecebido, 0);
+  const devo = repPendentes(), devoV = devo.reduce((s, c) => s + metrics(c).nossaRecebida, 0); // recebi o total e ainda não repassei a parte do escritório
   const pend = S.cases.filter(c => resultadoOf(c) === 'recebido' && c.financeiroStatus === 'pendente');
   const pendV = pend.reduce((s, c) => s + metrics(c).recebido, 0), pendMinha = pend.reduce((s, c) => s + metrics(c).parceiroRecebido, 0);
   const hiProv = list.filter(e => isProv(e) && e.categoria === 'Honorários iniciais'), hiVenc = hiProv.filter(isLate);
   const rows = list.map(e => { const c = S.cases.find(x => x.id === e.caseId); return `<tr>
     <td><span class="mono">${fmtDate(e.data)}</span></td>
     <td>${c ? `<b>${esc(c.cliente)}</b><span class="sub">${esc(c.tipoAcao || '')} · ${esc(numFmt(c))}</span>` : '<span class="muted">—</span>'}</td>
-    <td><span class="pill ${e.tipo === 'receita' ? 'rec' : 'desp'}">${e.tipo === 'receita' ? 'Receita' : (e.categoria === minhaCat ? (assoc ? 'Bonificação' : 'Repasse') : 'Despesa')}</span>${isProv(e) ? (isLate(e) ? '<span class="pill warn" style="margin-left:4px">Vencida</span>' : '<span class="pill wait" style="margin-left:4px">A receber</span>') : ''}<span class="sub">${esc(e.categoria)}${e.parcela ? ' · parcela ' + esc(e.parcela) : ''}${e.descricao ? ' · ' + esc(e.descricao) : ''}</span></td>
+    <td><span class="pill ${e.tipo === 'receita' ? 'rec' : 'desp'}">${e.tipo === 'receita' ? 'Receita' : (e.categoria === minhaCat ? (assoc ? 'Bonificação' : 'Repasse') : 'Despesa')}</span>${isProv(e) ? (c && repPendente(c) ? '<span class="pill warn" style="margin-left:4px" title="Parte do escritório que você ainda precisa repassar">A repassar ao escritório</span>' : isLate(e) ? '<span class="pill warn" style="margin-left:4px">Vencida</span>' : '<span class="pill wait" style="margin-left:4px">A receber</span>') : ''}<span class="sub">${esc(e.categoria)}${e.parcela ? ' · parcela ' + esc(e.parcela) : ''}${e.descricao ? ' · ' + esc(e.descricao) : ''}</span></td>
     <td class="num ${isProv(e) ? 'muted' : ''}">${brl(e.valor)}</td></tr>`; }).join('');
   return `
     <div class="page-h"><div><h1>Meu financeiro</h1><p>Só o que diz respeito aos seus processos: honorários iniciais dos seus clientes, recebimentos e ${assoc ? 'sua bonificação' : 'o repasse da sua parte'}. O Financeiro geral do escritório fica com a administração.</p></div></div>
     <div class="tiles">
       ${tile('Honorários recebidos', brlShort(recebidoProc), 'nos seus processos, já lançados')}
       ${tile(assoc ? 'Sua bonificação' : 'Sua parte (repasses)', brlShort(minhaParte + repassadoPorMim), repassadoPorMim ? `inclui ${brlShort(repassadoPorMim)} que você recebeu direto` : 'lançada pelo escritório', 'pos')}
+      ${devo.length ? tile('A repassar ao escritório', brlShort(devoV), `${devo.length} processo${devo.length === 1 ? '' : 's'} em que você recebeu o total e a parte do escritório ainda não foi repassada`, 'neg') : ''}
       ${tile('Aguardando lançamento', brlShort(pendV), pend.length ? `${pend.length} processo${pend.length === 1 ? '' : 's'} recebido${pend.length === 1 ? '' : 's'} · sua parte ${brlShort(pendMinha)}` : 'nenhum recebimento pendente', pend.length ? 'neg' : '')}
       ${tile('Iniciais a receber', brlShort(hiProv.reduce((s, e) => s + num(e.valor), 0)), hiVenc.length ? `${hiVenc.length} parcela${hiVenc.length === 1 ? '' : 's'} vencida${hiVenc.length === 1 ? '' : 's'} (${brlShort(hiVenc.reduce((s, e) => s + num(e.valor), 0))})` : `${hiProv.length} parcela${hiProv.length === 1 ? '' : 's'} a vencer`, hiVenc.length ? 'neg' : '')}
     </div>
     ${pend.length ? `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>${pend.length} recebimento${pend.length === 1 ? '' : 's'}</b> que você informou aguarda${pend.length === 1 ? '' : 'm'} o lançamento pelo escritório: ${esc(pend.map(c => `${c.cliente} (${brl(metrics(c).recebido)})`).join(', '))}.</span></div>` : ''}
+    ${devo.length ? `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>Repasse pendente ao escritório: ${brl(devoV)}</b> — ${esc(devo.map(c => `${c.cliente} (${brl(metrics(c).nossaRecebida)}, recebido em ${fmtDate(c.dataRecebimento)})`).join('; '))}. O escritório dá a baixa quando o valor chegar.</span></div>` : ''}
     <div class="card-h"><h2>Lançamentos dos meus processos</h2><small>${list.length} · lançados pelo escritório</small></div>
     ${!S.loaded ? '<div class="empty"><b>Carregando…</b></div>' : list.length ? `<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Data</th><th>Processo</th><th>Lançamento</th><th class="num">Valor</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty"><b>Nenhum lançamento ainda</b>Quando o escritório lançar honorários iniciais, recebimentos ou repasses dos seus processos, eles aparecem aqui.</div>'}
     <div class="tfoot"><span>Parcelas de honorários iniciais: a baixa é feita pelo escritório quando o cliente paga.</span><span>Dúvidas sobre um lançamento? Fale com o escritório.</span></div>`;
@@ -1200,7 +1222,11 @@ function filteredFinance() {
 /* ---- créditos provisionados: parcelas futuras, meses de contrato em aberto e créditos comprados a receber ---- */
 function provisionedItems() {
   const today = todayISO(), ym = today.slice(0, 7), items = [];
-  for (const e of S.finance) if (isProv(e) && e.tipo === 'receita') items.push({ kind: 'parcela', id: e.id, origem: e.descricao || e.categoria, natureza: e.categoria, valor: num(e.valor), venc: (e.vencimento || e.data).slice(0, 10), late: isLate(e), ref: e });
+  for (const e of S.finance) if (isProv(e) && e.tipo === 'receita') {
+    // receita de processo cujo parceiro recebeu e ainda não repassou: a baixa confirma o repasse no próprio processo
+    const cs = e.caseId ? S.cases.find(x => x.id === e.caseId) : null, rep = cs && repPendente(cs) ? cs : null;
+    items.push({ kind: 'parcela', rep, id: e.id, origem: rep ? `Repasse de ${partnerName(rep.parceiroId)} — processo ${numFmt(rep)} (${rep.cliente})` : (e.descricao || e.categoria), natureza: rep ? 'Repasse de parceiro pendente' : e.categoria, valor: num(e.valor), venc: (e.vencimento || e.data).slice(0, 10), late: rep ? false : isLate(e), ref: e });
+  }
   for (const c of S.contracts) {
     if (c.ativo === false) continue;
     let cur = ymOf(c.dataInicio); const end = c.dataFim ? ymOf(c.dataFim) : ym;
@@ -1219,11 +1245,11 @@ function provisionedItems() {
   }
   return items.sort((a, b) => (a.kind === 'processo') - (b.kind === 'processo') || (a.venc || '9999').localeCompare(b.venc || '9999'));
 }
-const provSplit = items => { const proc = items.filter(x => x.kind === 'processo'), firm = items.filter(x => x.kind !== 'processo'); return { proc, firm, total: items.reduce((s, x) => s + x.valor, 0), firmV: firm.reduce((s, x) => s + x.valor, 0), procV: proc.reduce((s, x) => s + x.valor, 0) }; };
+const provSplit = items => { const proc = items.filter(x => x.kind === 'processo'), firm = items.filter(x => x.kind !== 'processo'), rep = items.filter(x => x.rep); return { proc, firm, rep, total: items.reduce((s, x) => s + x.valor, 0), firmV: firm.reduce((s, x) => s + x.valor, 0), procV: proc.reduce((s, x) => s + x.valor, 0), repV: rep.reduce((s, x) => s + x.valor, 0) }; };
 function provisionedBox(compact) {
   const items = provisionedItems(), sp = provSplit(items), total = sp.total, late = items.filter(x => x.late), lateV = late.reduce((s, x) => s + x.valor, 0);
   return `<button class="provbox ${late.length ? 'has-late' : ''}" type="button" data-act="open-prov" title="Ver créditos provisionados e dar baixa">
-    <span class="pb-main"><span class="lbl">Créditos provisionados</span><b>${brlShort(total)}</b><small>${items.length} ${items.length === 1 ? 'item' : 'itens'} a receber${sp.proc.length ? ` · ${brlShort(sp.procV)} em ${sp.proc.length} processo${sp.proc.length === 1 ? '' : 's'} (estimativa)` : ''}${compact ? '' : ' · parcelas, contratos, créditos e processos'}</small></span>
+    <span class="pb-main"><span class="lbl">Créditos provisionados</span><b>${brlShort(total)}</b><small>${items.length} ${items.length === 1 ? 'item' : 'itens'} a receber${sp.rep.length ? ` · <strong style="color:var(--warn)">${brlShort(sp.repV)} de repasses de parceiros</strong> (${sp.rep.length})` : ''}${sp.proc.length ? ` · ${brlShort(sp.procV)} em ${sp.proc.length} processo${sp.proc.length === 1 ? '' : 's'} (estimativa)` : ''}${compact ? '' : ' · parcelas, contratos, créditos e processos'}</small></span>
     <span class="pb-side">${late.length ? `<span class="pill warn">Em atraso: ${brlShort(lateV)}</span><small>${late.length} vencido${late.length === 1 ? '' : 's'}</small>` : '<span class="pill ok">Nada em atraso</span>'}<span class="pb-cta">Ver e dar baixa →</span></span>
   </button>`;
 }
@@ -1235,11 +1261,11 @@ function openProvisionedSheet() {
     <span class="pr-side"><b>${brl(x.valor)}</b><button class="btn btn-sm" type="button" data-pv-case="${esc(x.ref.id)}">${faseOf(x.ref) === 'julgado' ? 'Informar recebimento' : 'Informar resultado'}</button></span></div>`).join('');
   const rows = sp.firm.map(x => `<label class="prov-row ${x.late ? 'late' : ''}" for="pv-${esc(x.id)}">
     <input type="checkbox" id="pv-${esc(x.id)}" data-pv="${esc(x.id)}">
-    <span class="pr-main"><b>${esc(x.origem)}</b><small>${esc(x.natureza)} · ${x.kind === 'parcela' ? 'parcela' + (x.ref.parcela ? ' ' + esc(x.ref.parcela) : '') : x.kind === 'contrato' ? 'mensalidade de contrato' : 'crédito comprado'}</small></span>
-    <span class="pr-side"><b>${brl(x.valor)}</b><small>${x.venc ? (x.late ? '<span class="neg">venceu em ' + fmtDate(x.venc) + '</span>' : 'vence em ' + fmtDate(x.venc)) : 'sem data prevista'}</small></span></label>`).join('');
+    <span class="pr-main"><b>${esc(x.origem)}</b><small>${esc(x.natureza)} · ${x.rep ? 'o parceiro recebeu o total e deve a parte do escritório' : x.kind === 'parcela' ? 'parcela' + (x.ref.parcela ? ' ' + esc(x.ref.parcela) : '') : x.kind === 'contrato' ? 'mensalidade de contrato' : 'crédito comprado'}</small></span>
+    <span class="pr-side"><b>${brl(x.valor)}</b><small>${x.rep ? 'pendente desde ' + fmtDate(x.venc) : x.venc ? (x.late ? '<span class="neg">venceu em ' + fmtDate(x.venc) + '</span>' : 'vence em ' + fmtDate(x.venc)) : 'sem data prevista'}</small></span></label>`).join('');
   openSheet('Créditos provisionados', `
-    <p class="hint">Valores que o escritório tem a receber e ainda não entraram. Marque o que já foi recebido e confirme: cada item vira receita realizada no Financeiro.</p>
-    ${items.length ? `<div class="summary" style="margin-bottom:12px"><div><div class="lbl">Total provisionado</div><div class="v">${brl(total)}</div></div><div><div class="lbl">Em atraso</div><div class="v neg">${brl(items.filter(x => x.late).reduce((s, x) => s + x.valor, 0))}</div></div><div><div class="lbl">Processos (estimativa)</div><div class="v">${brl(sp.procV)}</div></div></div>
+    <p class="hint">Valores que o escritório tem a receber e ainda não entraram. Marque o que já foi recebido e confirme: cada item vira receita realizada no Financeiro${sp.rep.length ? '; um repasse de parceiro confirmado também atualiza o processo para “o parceiro recebeu e repassou”' : ''}.</p>
+    ${items.length ? `<div class="summary" style="margin-bottom:12px"><div><div class="lbl">Total provisionado</div><div class="v">${brl(total)}</div></div><div><div class="lbl">Em atraso</div><div class="v neg">${brl(items.filter(x => x.late).reduce((s, x) => s + x.valor, 0))}</div></div>${sp.rep.length ? `<div><div class="lbl">Repasses de parceiros</div><div class="v">${brl(sp.repV)}</div></div>` : ''}<div><div class="lbl">Processos (estimativa)</div><div class="v">${brl(sp.procV)}</div></div></div>
     ${sp.firm.length ? `<div class="row" style="margin-bottom:8px"><div class="field"><label for="pv-data">Data do recebimento <small>(aplicada aos itens marcados)</small></label><input type="date" id="pv-data" value="${todayISO()}"></div><div class="field" style="justify-content:flex-end"><button class="btn btn-sm" type="button" id="pv-all">Marcar todos os vencidos</button></div></div>
     <div class="prov-list">${rows}</div>` : '<p class="hint">Nenhuma parcela, mensalidade ou crédito comprado pendente.</p>'}
     ${sp.proc.length ? `<div class="card-h" style="margin-top:14px"><h2>Processos em andamento</h2><small>${sp.proc.length} · ${brl(sp.procV)} previstos</small></div>
@@ -1260,7 +1286,8 @@ function openProvisionedSheet() {
     const list = checked(), data = $('#pv-data').value || todayISO(), err = $('#pv-err'); $('#pv-ok').disabled = true;
     try {
       for (const x of list) {
-        if (x.kind === 'parcela') await api.updateFinance(x.ref.id, { tipo: 'receita', categoria: x.ref.categoria, descricao: x.ref.descricao, valor: x.ref.valor, data, observacoes: x.ref.observacoes || '', status: 'realizado', vencimento: x.ref.vencimento, parcela: x.ref.parcela, grupoId: x.ref.grupoId, caseId: x.ref.caseId, contractId: x.ref.contractId, competencia: x.ref.competencia, creditId: x.ref.creditId, associadoId: x.ref.associadoId });
+        if (x.rep) { const d = { ...x.rep, fluxoRecebimento: 'parceiro', dataRepasse: data }; delete d.id; await api.updateCase(x.rep.id, d, { statusAtual: x.rep.financeiroStatus || 'lancado', fluxoAtual: 'parceiro_pendente' }); }
+        else if (x.kind === 'parcela') await api.updateFinance(x.ref.id, { tipo: 'receita', categoria: x.ref.categoria, descricao: x.ref.descricao, valor: x.ref.valor, data, observacoes: x.ref.observacoes || '', status: 'realizado', vencimento: x.ref.vencimento, parcela: x.ref.parcela, grupoId: x.ref.grupoId, caseId: x.ref.caseId, contractId: x.ref.contractId, competencia: x.ref.competencia, creditId: x.ref.creditId, associadoId: x.ref.associadoId });
         else if (x.kind === 'contrato') await api.createFinance({ tipo: 'receita', categoria: 'Contratos com empresas', descricao: `${x.ref.empresa} — mensalidade de ${ymLabel(x.ym)}${x.ref.servico ? ' · ' + x.ref.servico : ''}`, valor: x.valor, data, observacoes: '', contractId: x.ref.id, competencia: x.ym });
         else if (x.kind === 'credito') { const d = { ...x.ref, recebido: true, valorRecebido: x.valor, dataRecebimento: data }; delete d.id; await api.updateCredit(x.ref.id, d, { lancarRecebimento: true, lancamentos: creditFinanceEntries(d), statusCompra: x.ref.financeiroCompra || 'nao', statusRecebimento: x.ref.financeiroRecebimento || 'nao' }); }
       }
@@ -1386,6 +1413,7 @@ function renderFinance() {
         <div><span class="lbl">Margem</span><b class="${t.res < 0 ? 'neg' : ''}">${t.rec > 0 ? pctFmt(t.margem) : '—'}</b><small>média mensal ${mediaRes < 0 ? '−' : ''}${brlShort(Math.abs(mediaRes))}</small></div>
       </div>
     </section>
+    ${repBanner()}
     ${provisionedBox()}
     ${payablesBox()}
     <div class="card" style="margin-bottom:12px"><div class="card-h"><h2>Receitas × despesas por mês</h2><small>${ano} · só valores realizados · a linha é o resultado do mês</small></div><div class="chart" id="chart-finance"></div></div>
@@ -1619,6 +1647,7 @@ function bindViewOnce(view) {
         case 'go-cases': S.tab = 'cases'; savePref('tab', S.tab); return render();
         case 'go-credits': S.tab = 'credits'; savePref('tab', S.tab); return render();
         case 'go-fin-pending': S.tab = 'cases'; S.f.status = 'fin_pendente'; savePref('tab', S.tab); return render();
+        case 'go-rep-pending': S.tab = 'cases'; S.f.status = 'rep_pendente'; S.f.period = 'all'; savePref('tab', S.tab); return render();
         case 'export': return exportCSV();
         case 'new-partner': return openPartnerForm(null);
         case 'edit-partner': return openPartnerForm(partnerById(id));
@@ -1831,7 +1860,11 @@ function openCaseForm(c, prefill) {
             <div class="field"><label for="c-drec">Data do recebimento</label><input type="date" id="c-drec" value="${esc((c?.dataRecebimento || '').slice(0, 10))}"></div>
           </div>
           <p class="hint" id="c-rec-hint" style="margin:-4px 0 10px"></p>
-          <div class="field" id="c-fluxo-field" ${isAssoc(p) || office0 ? 'hidden' : ''}><label for="c-fluxo">Quem recebeu o dinheiro</label><select id="c-fluxo"><option value="escritorio" ${(d.fluxoRecebimento || 'escritorio') === 'escritorio' ? 'selected' : ''}>O escritório recebeu o valor total e repassa a parte do parceiro</option><option value="parceiro" ${d.fluxoRecebimento === 'parceiro' ? 'selected' : ''}>O parceiro recebeu e repassou a parte do escritório</option></select></div>
+          <div class="row" id="c-fluxo-field" ${isAssoc(p) || office0 ? 'hidden' : ''}>
+            <div class="field grow"><label for="c-fluxo">Quem recebeu o dinheiro</label><select id="c-fluxo" ${!admin && finStatus === 'lancado' ? 'disabled title="Já lançado pelo escritório; o escritório confirma o repasse"' : ''}><option value="escritorio" ${(d.fluxoRecebimento || 'escritorio') === 'escritorio' ? 'selected' : ''}>O escritório recebeu o valor total e repassa a parte do parceiro</option><option value="parceiro" ${d.fluxoRecebimento === 'parceiro' ? 'selected' : ''}>O parceiro recebeu e repassou a parte do escritório</option><option value="parceiro_pendente" ${d.fluxoRecebimento === 'parceiro_pendente' ? 'selected' : ''}>O parceiro recebeu e ainda não repassou a parte do escritório</option></select></div>
+            <div class="field" id="c-drep-field" hidden><label for="c-drep">Data em que o repasse chegou</label><input type="date" id="c-drep" value="${todayISO()}"></div>
+          </div>
+          <p class="hint" id="c-fluxo-hint" style="margin:-4px 0 10px"></p>
           <div id="fin-box"></div>
         </div>
         <div id="lost-fields" ${res0 === 'perdido' ? '' : 'hidden'}>
@@ -2023,6 +2056,7 @@ function openCaseForm(c, prefill) {
       pctParceiro: off ? 0 : num(g('c-pp').value), pctNosso: off ? 100 : num(g('c-pn').value),
       recebido: res === 'recebido', valorRecebido: res === 'recebido' ? round2(parseMoney(g('c-vrecc').value) + (admC ? 0 : parseMoney(g('c-vrecs').value))) : null, sucumbRecebido: res === 'recebido' && !admC ? parseMoney(g('c-vrecs').value) : 0, dataRecebimento: res === 'recebido' ? g('c-drec').value : null,
       fluxoRecebimento: res === 'recebido' && !off ? g('c-fluxo').value : 'escritorio', dataEncerramento: res === 'perdido' ? g('c-denc').value : null,
+      dataRepasse: res === 'recebido' && !off && !g('c-drep-field').hidden ? g('c-drep').value || todayISO() : null,
       temCorretor: g('c-cor').checked, nomeCorretor: g('c-cor').checked ? g('c-corn').value.trim() : '', valorCorretor: g('c-cor').checked ? parseMoney(g('c-corv').value) : 0, corretorPago: g('c-cor').checked ? g('c-corp').checked : false,
       observacoes: g('c-obs').value.trim()
     };
@@ -2036,10 +2070,22 @@ function openCaseForm(c, prefill) {
       ? `<div><div class="lbl">${baseOf(data) === 'reducao_debito' ? 'Redução do débito' : concl(data) && has(data.valorCondenacao) ? (data.natureza === 'administrativo' ? 'Valor concedido' : 'Condenação líquida') : data.natureza === 'administrativo' ? 'Valor pretendido' : 'Valor pretendido da ação'}</div><div class="v">${brl(honBase(data))}</div></div><div><div class="lbl">${m.recebido > 0 ? 'Honorários contratuais recebidos' : honLabel(data)}</div><div class="v">${brl(m.recebido > 0 ? m.contrRec : m.contratual)}</div></div>${sucItem}<div><div class="lbl">Honorários iniciais</div><div class="v">${brl(data.honorariosIniciais)}</div></div><div><div class="lbl">Líquido do escritório</div><div class="v">${brl(data.honorariosIniciais + m.nossaParte - m.custoLead - m.corretor)}</div></div>`
       : `<div><div class="lbl">${shareLabel(pSel, 'partner')}</div><div class="v">${brl(m.parteParceiro)}</div></div><div><div class="lbl">${shareLabel(pSel, 'office')}</div><div class="v">${brl(m.nossaParte)}</div></div>${sucItem}<div><div class="lbl">Honorários iniciais</div><div class="v">${brl(data.honorariosIniciais)}</div></div><div><div class="lbl">Líquido do escritório</div><div class="v">${brl(m.nossaParte - m.custoLead - m.corretor)}</div></div>`;
     const box = g('fin-box'); if (!box) return;
+    // quem recebeu: dica e, ao confirmar um repasse pendente já lançado, a data em que o dinheiro chegou
+    const fluxo = data.fluxoRecebimento, fluxoAntes = c?.fluxoRecebimento || 'escritorio', parceria = data.titularidade === 'parceria' && !isAssoc(pSel);
+    const confirmando = data.resultado === 'recebido' && parceria && finStatus === 'lancado' && fluxoAntes === 'parceiro_pendente' && fluxo === 'parceiro';
+    g('c-drep-field').hidden = !confirmando;
+    g('c-fluxo-hint').innerHTML = data.resultado !== 'recebido' || !parceria ? '' : confirmando ? `Ao salvar, a parte do escritório (<b>${brl(m.nossaRecebida)}</b>) deixa de ser “a receber” e vira receita recebida na data informada.`
+      : fluxo === 'parceiro_pendente' ? (admin ? `A parte do escritório (<b>${brl(m.nossaRecebida)}</b>) fica como <b>a receber</b> em <b>Créditos provisionados</b>. Quando ${esc(pSel?.nome || 'o parceiro')} repassar, mude para “já repassou” e informe a data.` : `A parte do escritório (<b>${brl(m.nossaRecebida)}</b>) fica registrada como repasse pendente; o escritório confirma quando o valor chegar.`) : '';
     if (data.resultado !== 'recebido') { box.innerHTML = finStatus === 'lancado' ? '<div class="note">Este processo já tinha lançamentos no Financeiro; ao salvar com outra situação, eles serão removidos.</div>' : ''; return; }
-    if (finStatus === 'lancado') { box.innerHTML = `<div class="note">Recebimento já lançado no Financeiro em ${fmtDate((c?.financeiroEm || '').slice(0, 10))}. Alterações de valor devem ser ajustadas na aba Financeiro.</div>`; return; }
     const entries = financeEntriesFor({ ...data, id: c?.id });
-    const lines = entries.map(e => `<li>${e.tipo === 'receita' ? 'Receita' : 'Despesa'} · ${esc(e.categoria)} · <b>${brl(e.valor)}</b></li>`).join('');
+    const lines = entries.map(e => `<li>${e.tipo === 'receita' ? 'Receita' : 'Despesa'} · ${esc(e.categoria)} · <b>${brl(e.valor)}</b>${e.status === 'provisionado' ? ' <small>(a receber — repasse pendente)</small>' : ''}</li>`).join('');
+    if (finStatus === 'lancado') {
+      box.innerHTML = confirmando ? `<div class="note">Confirmação do repasse de <b>${esc(pSel?.nome || 'parceiro')}</b>: a receita de ${brl(m.nossaRecebida)} será marcada como recebida.</div>`
+        : fluxoAntes === 'parceiro' && fluxo === 'parceiro_pendente' ? `<div class="note">A receita de ${brl(m.nossaRecebida)} volta para <b>a receber</b> (repasse pendente de ${esc(pSel?.nome || 'parceiro')}).</div>`
+        : admin && parceria && fluxo !== fluxoAntes ? `<div class="note">Mudou quem recebeu: ao salvar, os lançamentos deste recebimento serão <b>refeitos</b> no Financeiro (ajustes feitos à mão neles se perdem).<ul style="margin:6px 0 0 18px;padding:0">${lines}</ul></div>`
+        : `<div class="note">Recebimento já lançado no Financeiro em ${fmtDate((c?.financeiroEm || '').slice(0, 10))}. Alterações de valor devem ser ajustadas na aba Financeiro.</div>`;
+      return;
+    }
     if (admin) {
       const checked = g('c-lancar') ? g('c-lancar').checked : true;
       box.innerHTML = `<label class="check" for="c-lancar"><input type="checkbox" id="c-lancar" ${checked ? 'checked' : ''}><span>Lançar no Financeiro agora<small>${data.dataRecebimento ? 'com a data do recebimento' : 'informe a data do recebimento'}</small></span></label><ul class="hint" style="margin:-4px 0 10px 18px;padding:0">${lines || '<li>Informe o valor recebido.</li>'}</ul>`;
@@ -2076,13 +2122,13 @@ function openCaseForm(c, prefill) {
       if (dup && !f.dataset.dupOk) { err.textContent = `Já existe um processo com este número (${dup.cliente}). Clique em salvar novamente para cadastrar mesmo assim.`; f.dataset.dupOk = '1'; return; }
     }
     err.textContent = ''; g('c-save').disabled = true;
-    const opts = { lancarFinanceiro: data.resultado === 'recebido' && wantsPost(), lancamentos: data.resultado === 'recebido' ? financeEntriesFor({ ...data, id: c?.id }) : [], statusAtual: finStatus };
+    const opts = { lancarFinanceiro: data.resultado === 'recebido' && wantsPost(), lancamentos: data.resultado === 'recebido' ? financeEntriesFor({ ...data, id: c?.id }) : [], statusAtual: finStatus, fluxoAtual: c?.fluxoRecebimento || 'escritorio' };
     const lancarHI = isNew && admin && data.honorariosIniciais > 0 && !!g('c-hini-fin')?.checked;
     const judicializar = data.natureza === 'administrativo' && data.resultado === 'perdido' && !!g('c-jud')?.checked;
     try {
       let created = null;
       if (isNew) { created = await api.createCase(data, opts); toast(opts.lancarFinanceiro ? 'Processo cadastrado e lançado no Financeiro.' : 'Processo cadastrado.'); }
-      else { await api.updateCase(c.id, data, opts); toast(opts.lancarFinanceiro ? 'Salvo e lançado no Financeiro.' : data.resultado === 'recebido' && !admin ? 'Recebimento informado ao escritório.' : 'Alterações salvas.'); }
+      else { await api.updateCase(c.id, data, opts); toast(opts.lancarFinanceiro ? 'Salvo e lançado no Financeiro.' : data.resultado === 'recebido' && !admin ? 'Recebimento informado ao escritório.' : admin && finStatus === 'lancado' && opts.fluxoAtual === 'parceiro_pendente' && data.fluxoRecebimento === 'parceiro' ? 'Repasse confirmado: receita marcada como recebida.' : 'Alterações salvas.'); }
       closeSheet();
       if (judicializar) { const salvo = { ...(c || {}), ...data, id: created?.id || c?.id }; openCaseForm(null, { parent: salvo, judicializar: true }); return; }
       if (lancarHI) openFinanceForm(null, 'receita', { categoria: 'Honorários iniciais', valor: data.honorariosIniciais, descricao: `Honorários iniciais — ${data.cliente} — processo ${data.numeroProcesso}`, caseId: created?.id || null });

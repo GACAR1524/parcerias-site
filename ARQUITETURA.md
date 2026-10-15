@@ -135,7 +135,7 @@ erDiagram
     text natureza "judicial | administrativo"
     text fase "em_curso | julgado"
     text resultado "em_andamento | recebido | perdido"
-    text fluxo_recebimento "escritorio | parceiro"
+    text fluxo_recebimento "escritorio | parceiro | parceiro_pendente"
     text financeiro_status "nao | pendente | lancado"
     text numero_processo
     text cliente
@@ -477,11 +477,12 @@ Quando um processo passa a **Finalizado e recebido**:
 |---|---|
 | Parceiro — o escritório recebeu o total | receita do valor total (categoria *Alvará de honorários finais* se julgado, senão *Honorários de parceria*) **+** despesa *Repasse a parceiro* com a parte do parceiro |
 | Parceiro — o parceiro recebeu e repassou | receita apenas da parte do escritório |
+| Parceiro — o parceiro recebeu e **ainda não repassou** (`parceiro_pendente`) | receita da parte do escritório com `status = provisionado` (a receber, `vencimento` = data do recebimento): aparece em **Créditos provisionados** ("Repasse de <parceiro>"), no aviso "Repasses pendentes de parceiros" (painel e Financeiro, por parceiro) e, para o parceiro, em "Meu financeiro" como *A repassar ao escritório*. A baixa é feita em Créditos provisionados ou no próprio processo (mudando para "já repassou" e informando a data em que o repasse chegou): a receita vira realizada nessa data e o processo passa a `parceiro`. O parceiro não confirma o próprio repasse (depois de lançado, a escolha dele é ignorada pelo servidor). |
 | Associado | receita do valor total (*Alvará…* ou *Honorários de êxito*) **+** despesa *Bonificação de associado* (`associado_id`) com a % do associado |
 | Só do escritório | receita do valor total, sem repasse |
 
 - O **administrador** lança na hora (opção marcada por padrão ao salvar). O **parceiro** só informa: o processo fica com `financeiro_status = pendente` e o painel do escritório mostra o aviso "recebimentos aguardando lançamento", com atalho para confirmar.
-- Salvar de novo um processo já lançado não duplica nada. Voltar para *Em andamento* ou *Perdido* remove os lançamentos vinculados. Excluir o processo mantém os lançamentos, sem o vínculo.
+- Salvar de novo um processo já lançado não duplica nada. Voltar para *Em andamento* ou *Perdido* remove os lançamentos **gerados pelo recebimento** (as cinco categorias acima; honorários iniciais e outros lançamentos vinculados ao processo ficam). Mudar "quem recebeu" entre *escritório* e *parceiro* depois de lançado **refaz** esses lançamentos (ajustes feitos à mão neles se perdem — a tela avisa). Excluir o processo mantém os lançamentos, sem o vínculo.
 - No site a regra roda no servidor (`settleFinance`, em `routes/cases.js`, dentro da mesma transação); no artifact, no adaptador `api-claude.js`, que só consegue gravar em `finance` quando o usuário é o proprietário.
 
 Esquema versionado: `schema_version` guarda a versão atual e `db.js` aplica migrações numeradas

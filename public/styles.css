@@ -369,3 +369,8 @@ tr.linked td:first-child{padding-left:26px}
 }
 
 @media (max-width:640px){.tiles{grid-template-columns:repeat(2,1fr);gap:8px}.tiles.arms{grid-template-columns:1fr}.tile{padding:12px}.tile .val{font-size:1.25rem}}
+
+/* quem recebeu o dinheiro + data do repasse (só aparece ao confirmar um repasse pendente) */
+#c-fluxo-field:has(#c-drep-field:not([hidden])){grid-template-columns:minmax(0,2fr) minmax(170px,1fr)}
+#c-fluxo{min-width:0;width:100%}
+@media (max-width:640px){#c-fluxo-field{grid-template-columns:1fr!important}}

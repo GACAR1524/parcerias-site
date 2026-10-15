@@ -623,6 +623,57 @@ try {
   check('bolsas do Pedro provisionadas até fev/2027 e o cartão passa a mostrar', true);
   await pg.click('[data-tab="finance"]'); await pg.waitForSelector('.provbox.pay');
   check('contas a pagar incluem salários e bolsas provisionados', /Contas a pagar/.test(await pg.textContent('.provbox.pay')));
+
+  // ---- quem recebeu: "o parceiro recebeu e ainda não repassou a parte do escritório" ----
+  await page.click('[data-tab="cases"]'); await page.waitForSelector('[data-act="new-case"]');
+  await page.selectOption('#f-status', ''); await page.waitForTimeout(150);
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-partner', await page.$eval('#c-partner', s => [...s.options].find(o => /Mariana/.test(o.textContent)).value));
+  await page.fill('#c-num', '08031313120268170001'); await page.fill('#c-cliente', 'Cliente Repasse'); await page.fill('#c-tipo', 'Ação contra casa de apostas'); await page.fill('#c-hon', '2000');
+  await page.check('#c-fase-julg'); await page.check('#c-res-rec'); await page.waitForSelector('#c-lancar');
+  await page.fill('#c-vcond', '10000'); await page.press('#c-vcond', 'Tab');
+  check('campo "Quem recebeu" oferece a terceira opção (parceiro ainda não repassou)', (await page.$$eval('#c-fluxo option', os => os.map(o => o.value))).join(',') === 'escritorio,parceiro,parceiro_pendente');
+  await page.selectOption('#c-fluxo', 'parceiro_pendente'); await page.waitForTimeout(150);
+  const hintFx = (await page.textContent('#c-fluxo-hint')).replace(/ /g, ' ');
+  check('dica explica que a parte do escritório (R$ 1.000) fica a receber em Créditos provisionados', /1\.000,00/.test(hintFx) && /Créditos provisionados/.test(hintFx));
+  check('prévia do lançamento: receita de R$ 1.000 "a receber — repasse pendente", sem despesa de repasse', /Receita.*1\.000,00.*repasse pendente/.test((await page.textContent('#fin-box')).replace(/ /g, ' ')) && !/Despesa/.test(await page.textContent('#fin-box')));
+  await page.click('#c-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Cliente Repasse') && tr.textContent.includes('repasse do parceiro pendente')), null, { timeout: 5000 });
+  check('tabela marca o processo com "repasse do parceiro pendente: R$ 1.000,00"', /repasse do parceiro pendente: R\$ 1\.000,00/.test((await page.textContent('tr[data-id]:has-text("Cliente Repasse")')).replace(/ /g, ' ')));
+  await page.click('[data-tab="finance"]'); await page.waitForSelector('.provbox');
+  const finTop = (await page.textContent('#view')).replace(/ /g, ' ');
+  check('Financeiro avisa "Repasses pendentes de parceiros: R$ 1.000,00" com o nome da parceira', /Repasses pendentes de parceiros: R\$ 1\.000,00/.test(finTop) && /Mariana Lopes R\$ 1\.000,00/.test(finTop) && /1\.000,00 de repasses de parceiros/.test(finTop));
+  await page.click('[data-act="open-prov"]'); await page.waitForSelector('.prov-row:has-text("Repasse de Mariana Lopes")');
+  check('Créditos provisionados lista o repasse pendente com a data em que o parceiro recebeu', /pendente desde/.test(await page.textContent('.prov-row:has-text("Repasse de Mariana Lopes")')));
+  await page.check('.prov-row:has-text("Repasse de Mariana Lopes") input'); await page.click('#pv-ok');
+  await page.waitForFunction(() => !document.querySelector('#pv-ok') && !/Repasses pendentes/.test(document.querySelector('#view').textContent), null, { timeout: 8000 });
+  check('confirmar o repasse dá baixa: o aviso some', true);
+  await page.click('[data-tab="cases"]'); await page.waitForSelector('tr[data-id]');
+  await page.click('tr[data-id]:has-text("Cliente Repasse")'); await page.waitForSelector('#case-form');
+  check('processo passa a "o parceiro recebeu e repassou", já lançado', (await page.inputValue('#c-fluxo')) === 'parceiro' && /já lançado/.test(await page.textContent('#fin-box')));
+  await page.selectOption('#c-fluxo', 'parceiro_pendente'); await page.waitForTimeout(150);
+  check('voltar para "ainda não repassou" avisa que a receita volta a ser a receber', /volta para a receber/.test(await page.textContent('#fin-box')));
+  await page.click('#c-save'); await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Cliente Repasse') && tr.textContent.includes('repasse do parceiro pendente')), null, { timeout: 5000 });
+  await page.click('tr[data-id]:has-text("Cliente Repasse")'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-fluxo', 'parceiro'); await page.waitForTimeout(150);
+  check('ao confirmar pelo processo aparece a data em que o repasse chegou', await page.isVisible('#c-drep') && /vira receita recebida/.test(await page.textContent('#c-fluxo-hint')));
+  await page.fill('#c-drep', relDate(-1)); await page.click('#c-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Cliente Repasse') && !tr.textContent.includes('repasse do parceiro pendente')), null, { timeout: 5000 });
+  check('confirmação pelo próprio processo também dá baixa', true);
+  // visão da parceira: deve ao escritório enquanto o repasse estiver pendente
+  await page.click('tr[data-id]:has-text("Cliente Repasse")'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-fluxo', 'parceiro_pendente'); await page.waitForTimeout(100); await page.click('#c-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Cliente Repasse') && tr.textContent.includes('repasse do parceiro pendente')), null, { timeout: 5000 });
+  await page.click('#btn-logout'); await page.waitForSelector('#login-form');
+  await page.fill('#lg-user', 'mariana.lopes'); await page.fill('#lg-pass', senhaParceira); await page.click('#lg-btn'); await page.waitForSelector('#tabs');
+  await page.click('[data-tab="myfin"]'); await page.waitForSelector('.tiles');
+  const myfinRep = (await page.textContent('#view')).replace(/ /g, ' ');
+  check('"Meu financeiro" da parceira mostra "A repassar ao escritório" (R$ 1.000,00) e o processo', /A repassar ao escritório/.test(myfinRep) && /Repasse pendente ao escritório: R\$ 1\.000,00/.test(myfinRep) && /Cliente Repasse/.test(myfinRep));
+  await page.click('[data-tab="cases"]'); await page.waitForSelector('tr[data-id]');
+  check('na lista da parceira o processo aparece com "repasse ao escritório pendente"', /repasse ao escritório pendente/.test(await page.textContent('tr[data-id]:has-text("Cliente Repasse")')));
+  await page.click('tr[data-id]:has-text("Cliente Repasse")'); await page.waitForSelector('#case-form');
+  check('a parceira não consegue confirmar o próprio repasse (campo travado)', await page.isDisabled('#c-fluxo'));
+  await page.click('#c-cancel');
   await ctx2.close();
   await ctx.close();
 } catch (e) { console.error('Erro no teste:', e); failures++; }

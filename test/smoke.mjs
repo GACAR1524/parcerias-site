@@ -98,6 +98,27 @@ try {
   r = await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'recebido', valorRecebido: 20000, dataRecebimento: '2026-09-26', fluxoRecebimento: 'parceiro', lancarFinanceiro: true });
   r = await call('a', 'GET', '/finance');
   check('parceiro recebeu e repassou: só a receita da nossa parte (60%)', r.data.finance.length === 1 && r.data.finance[0].tipo === 'receita' && r.data.finance[0].valor === 12000, r.data);
+  // parceiro recebeu e AINDA NÃO repassou: a nossa parte fica "a receber" até o escritório confirmar o repasse
+  await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'em_andamento' });
+  r = await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'recebido', valorRecebido: 20000, dataRecebimento: '2026-09-26', fluxoRecebimento: 'parceiro_pendente', lancarFinanceiro: true });
+  let rf = await call('a', 'GET', '/finance');
+  check('parceiro ainda não repassou: receita de 12 mil entra provisionada (a receber), vencendo na data do recebimento', r.status === 200 && r.data.case.fluxoRecebimento === 'parceiro_pendente' && rf.data.finance.length === 1 && rf.data.finance[0].status === 'provisionado' && rf.data.finance[0].valor === 12000 && rf.data.finance[0].vencimento === '2026-09-26' && /repasse de/.test(rf.data.finance[0].descricao), { c: r.data.case, f: rf.data.finance });
+  r = await call('p', 'PUT', `/cases/${cid}`, { ...caso, resultado: 'recebido', valorRecebido: 20000, dataRecebimento: '2026-09-26', fluxoRecebimento: 'parceiro' });
+  rf = await call('a', 'GET', '/finance');
+  check('o parceiro não confirma o próprio repasse: continua pendente e a receita continua a receber', r.status === 200 && r.data.case.fluxoRecebimento === 'parceiro_pendente' && rf.data.finance[0].status === 'provisionado', { c: r.data.case, f: rf.data.finance });
+  r = await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'recebido', valorRecebido: 20000, dataRecebimento: '2026-09-26', fluxoRecebimento: 'parceiro', dataRepasse: '2026-10-02' });
+  rf = await call('a', 'GET', '/finance');
+  check('escritório confirma o repasse: receita realizada na data do repasse e processo passa a "parceiro repassou"', r.status === 200 && r.data.case.fluxoRecebimento === 'parceiro' && r.data.case.financeiroStatus === 'lancado' && rf.data.finance.length === 1 && rf.data.finance[0].status === 'realizado' && rf.data.finance[0].data === '2026-10-02', { c: r.data.case, f: rf.data.finance });
+  r = await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'recebido', valorRecebido: 20000, dataRecebimento: '2026-09-26', fluxoRecebimento: 'parceiro_pendente' });
+  rf = await call('a', 'GET', '/finance');
+  check('voltar para "ainda não repassou" devolve a receita para a receber', r.data.case.fluxoRecebimento === 'parceiro_pendente' && rf.data.finance[0].status === 'provisionado', { c: r.data.case, f: rf.data.finance });
+  // trocar para "escritório recebeu" depois de lançado refaz os lançamentos; honorários iniciais vinculados ao processo não são tocados
+  r = await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', descricao: 'entrada', valor: 700, data: '2026-09-11', caseId: cid });
+  const hiId = r.data.id;
+  r = await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'recebido', valorRecebido: 20000, dataRecebimento: '2026-09-26', fluxoRecebimento: 'escritorio' });
+  rf = await call('a', 'GET', '/finance');
+  check('mudar para "escritório recebeu" refaz: receita total 20 mil + repasse 8 mil (40%), e os honorários iniciais continuam', r.data.case.fluxoRecebimento === 'escritorio' && rf.data.finance.length === 3 && rf.data.finance.some(e => e.tipo === 'receita' && e.valor === 20000 && e.status === 'realizado') && rf.data.finance.some(e => e.categoria === 'Repasse a parceiro' && e.valor === 8000) && rf.data.finance.some(e => e.id === hiId), rf.data);
+  await call('a', 'DELETE', `/finance/${hiId}`);
   r = await call('a', 'PUT', `/cases/${cid}`, { ...caso, parceiroId: pid, resultado: 'perdido', dataEncerramento: '2026-09-27' });
   check('perdido: sem recebimento, com data de encerramento, lançamentos removidos', r.status === 200 && r.data.case.resultado === 'perdido' && r.data.case.dataEncerramento === '2026-09-27' && r.data.case.recebido === false, r);
   r = await call('a', 'GET', '/finance'); check('financeiro zerado após perdido', r.data.finance.length === 0, r.data);
