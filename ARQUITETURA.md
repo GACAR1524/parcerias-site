@@ -372,9 +372,16 @@ em vez da caixa.
 
 **Parcelas de honorários iniciais por processo.** `hiStatus(c)` lê as receitas *Honorários
 iniciais* vinculadas ao processo (`case_id`) e resume: pagas/vencidas/a vencer, total e próximo
-vencimento — pill "Iniciais em dia / em atraso / quitados" na tabela de processos e no cadastro. O
-**associado** recebe no bootstrap só essas receitas dos próprios processos (nada mais do
-Financeiro), para acompanhar quem está em atraso; a baixa continua pela administração.
+vencimento — pill "Iniciais em dia / em atraso / quitados" na tabela de processos e no cadastro.
+
+**"Meu financeiro" (parceiro e associado, só no site).** O bootstrap de quem não é administração
+nem estagiário traz apenas os lançamentos **vinculados aos próprios processos** (`finance_entries
+JOIN cases ON partner_id = eu`): honorários iniciais dos seus clientes, recebimentos e o
+repasse/bonificação. A aba "Meu financeiro" (`renderMyFinance`) mostra honorários recebidos nos
+seus processos, sua parte, recebimentos informados que aguardam lançamento e parcelas de iniciais
+a receber/vencidas — tudo somente leitura; as rotas `/api/finance` continuam exclusivas da
+administração (403 para os demais). No artifact a aba não existe (`features.myFinance` falso),
+porque a coleção `finance` é legível só pelo dono.
 
 **Honorários sucumbenciais (v11).** O número da decisão — `valor_condenacao`, o **valor total da
 condenação** — normalmente já inclui os honorários de sucumbência, que são **só dos advogados**.

@@ -31,8 +31,9 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
   clique, recessos, meio período) não contam falta.
 
 Há um login de **controle geral** (administração, que vê tudo e a visão geral segmentada por
-braço), um login para **cada advogado parceiro** (vê só os próprios processos), para **cada
-associado** (processos + Meu ponto) e para **cada estagiário** (somente Meu ponto).
+braço), um login para **cada advogado parceiro** (vê só os próprios processos e, em "Meu
+financeiro", só os lançamentos deles), para **cada associado** (processos + Meu financeiro + Meu
+horário) e para **cada estagiário** (somente Meu horário).
 
 Este pacote está pronto para ser publicado em hospedagem própria (VPS ou serviço de
 contêineres). Enquanto isso, a mesma interface roda como *artifact* no Claude — os dois

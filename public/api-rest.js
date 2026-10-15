@@ -30,6 +30,8 @@
  *   manualPunch({ partnerId, data, hora, tipo, observacao }) / decidePunch(id, decisao, observacao) / deletePunch(id)  (administração)
  *   loadPonto(de, ate) → carrega mais registros no cache (meses antigos); getPontoConfig() → { config, meuIp }; savePontoConfig(c); myIp()
  *   features.ip: true quando a checagem por rede do escritório existe (site)
+ *   features.myFinance: true quando parceiro/associado recebem os lançamentos dos próprios processos (aba "Meu financeiro"; só no site —
+ *                       no artifact a coleção finance é lida apenas pelo dono)
  *   createCredit/updateCredit aceitam opts { lancarCompra, lancarRecebimento, lancamentos, statusCompra, statusRecebimento }
  *   exportCSV(filename, csvText) → bool
  *
@@ -92,7 +94,7 @@
 
   window.ParceriasAPI = {
     mode: 'rest',
-    features: { export: true, changePassword: true, ip: true, serverClock: true, backup: true },
+    features: { export: true, changePassword: true, ip: true, serverClock: true, backup: true, myFinance: true },
 
     async init() {
       try {

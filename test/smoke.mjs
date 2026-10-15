@@ -159,7 +159,7 @@ try {
   r = await call('a', 'GET', '/bootstrap');
   check('bootstrap do admin traz o financeiro', Array.isArray(r.data.finance) && r.data.finance.length === 2, r.data);
   r = await call('p2', 'GET', '/bootstrap');
-  check('bootstrap do parceiro não traz o financeiro', r.data.finance === undefined, r.data);
+  check('bootstrap do parceiro traz só os lançamentos dos próprios processos (aqui ainda nenhum)', r.status === 200 && Array.isArray(r.data.finance) && r.data.finance.length === 0 && r.data.credits === undefined && r.data.contracts === undefined, r.data);
   r = await call('a', 'DELETE', `/finance/${fid}`);
   check('admin exclui lançamento', r.status === 200, r);
   // limpa o financeiro para os blocos seguintes
@@ -384,6 +384,11 @@ try {
   check('bootstrap do associado traz só as parcelas de honorários iniciais dos próprios processos', r.status === 200 && Array.isArray(r.data.finance) && r.data.finance.length === 2 && r.data.finance.every(e => e.caseId === cidAs && e.categoria === 'Honorários iniciais') && r.data.cases.length === 1, { finance: r.data.finance, cases: r.data.cases.length });
   r = await call('s', 'GET', '/finance');
   check('associado continua sem acesso ao Financeiro completo', r.status === 403, r);
+  r = await call('p', 'GET', '/bootstrap');
+  const myCaseIds = new Set(r.data.cases.map(x => x.id));
+  check('parceiro recebe só os lançamentos vinculados aos próprios processos', r.status === 200 && Array.isArray(r.data.finance) && r.data.finance.every(e => myCaseIds.has(e.caseId)) && r.data.finance.length < fin.length, { n: r.data.finance.length, total: fin.length });
+  r = await call('p', 'GET', '/finance');
+  check('parceiro não acessa o Financeiro geral', r.status === 403, r);
   await call('a', 'DELETE', `/cases/${cidAs}`);
   r = await call('a', 'POST', '/partners', { tipo: 'estagiario', nome: 'Pedro Lima', usuario: 'pedro', senha: 'estagio1', curso: 'Direito', instituicao: 'UFMA', bolsa: 900, jornada: { dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00']] } });
   check('admin cadastra estagiário com bolsa e jornada da manhã', r.status === 201 && r.data.partner.tipo === 'estagiario' && r.data.partner.bolsa === 900 && r.data.partner.jornada.blocos.length === 1 && r.data.partner.pctNossoPadrao === 100, r);

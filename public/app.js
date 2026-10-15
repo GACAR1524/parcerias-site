@@ -200,7 +200,8 @@ function enterApp() {
   $('#login-screen').hidden = true;
   const shell = $('#shell'); shell.hidden = false;
   const admin = isAdmin(), tipo = myTipo(), intern = tipo === 'estagiario', employee = intern || tipo === 'associado';
-  const tabsAllowed = admin ? ['overview', 'cases', 'partners', 'credits', 'contracts', 'finance', 'ponto'] : intern ? ['ponto'] : employee ? ['overview', 'cases', 'ponto'] : ['overview', 'cases'];
+  const myFin = !admin && !intern && !!api.features.myFinance;
+  const tabsAllowed = admin ? ['overview', 'cases', 'partners', 'credits', 'contracts', 'finance', 'ponto'] : intern ? ['ponto'] : employee ? ['overview', 'cases', ...(myFin ? ['myfin'] : []), 'ponto'] : ['overview', 'cases', ...(myFin ? ['myfin'] : [])];
   if (!tabsAllowed.includes(S.tab)) S.tab = tabsAllowed[0];
   const whoLabel = admin ? 'Controle geral' : intern ? 'Estagiário' : tipo === 'associado' ? 'Advogado associado' : 'Parceiro';
   shell.innerHTML = `
@@ -214,7 +215,7 @@ function enterApp() {
       </div>
     </div></header>
     <nav class="nav" aria-label="Seções"><div class="nav-in" role="tablist" id="tabs">
-      ${intern ? '' : `<button role="tab" data-tab="overview">Visão geral</button><button role="tab" data-tab="cases">${admin ? 'Processos' : 'Meus processos'}</button>`}
+      ${intern ? '' : `<button role="tab" data-tab="overview">Visão geral</button><button role="tab" data-tab="cases">${admin ? 'Processos' : 'Meus processos'}</button>`}${myFin ? '<button role="tab" data-tab="myfin">Meu financeiro</button>' : ''}
       ${admin ? '<button role="tab" data-tab="partners">Parceiros e associados</button><button role="tab" data-tab="credits">Compra de créditos</button><button role="tab" data-tab="contracts">Contratos com empresas</button><button role="tab" data-tab="finance">Financeiro</button><button role="tab" data-tab="ponto">Controle de horário</button>' : ''}
       ${employee ? '<button role="tab" data-tab="ponto">Meu horário</button>' : ''}
     </div></nav>
@@ -333,6 +334,7 @@ function render() {
   else if (S.tab === 'contracts' && isAdmin()) view.innerHTML = ro + renderContracts();
   else if (S.tab === 'ponto') view.innerHTML = ro + (isAdmin() ? renderPonto() : renderMyPonto());
   else if (S.tab === 'cases' && myTipo() !== 'estagiario') view.innerHTML = ro + renderCases();
+  else if (S.tab === 'myfin' && !isAdmin() && myTipo() !== 'estagiario' && api.features.myFinance) view.innerHTML = ro + renderMyFinance();
   else view.innerHTML = ro + renderOverview();
   afterRender(view);
 }
@@ -602,6 +604,37 @@ function renderPartners() {
       <div class="toolbar">${all.some(p => isEmployee(p) && p.ativo !== false && payValue(p) > 0) ? '<button class="btn" type="button" data-act="payroll" title="Lançar nas despesas, de uma vez, os salários dos associados e as bolsas dos estagiários dos próximos meses">Provisionar salários e bolsas</button>' : ''}<button class="btn" type="button" data-act="new-estagiario">+ Novo estagiário</button><button class="btn" type="button" data-act="new-associado">+ Novo associado</button><button class="btn btn-primary" type="button" data-act="new-partner">+ Novo parceiro</button></div></div>
     <div class="toolbar" style="margin-bottom:14px">${chip('', `Todos (${all.length})`)}${chip('parceiro', `Parceiros (${nPar})`)}${chip('associado', `Associados (${nAss})`)}${chip('estagiario', `Estagiários (${nEst})`)}</div>
     ${!S.loaded ? '<div class="empty"><b>Carregando…</b></div>' : (ps.length ? `<div class="partner-grid">${cards}</div>` : `<div class="empty"><b>Nenhum ${S.fp === 'associado' ? 'associado' : S.fp === 'estagiario' ? 'estagiário' : S.fp === 'parceiro' ? 'parceiro' : 'cadastro'}</b>Crie o primeiro login e envie usuário e senha à pessoa.</div>`)}`;
+}
+
+/* ============ meu financeiro (parceiro / associado): só os lançamentos dos próprios processos ============ */
+function renderMyFinance() {
+  const me = partnerById(myPartnerId()), assoc = isAssoc(me), myIds = new Set(S.cases.map(c => c.id));
+  const list = S.finance.filter(e => e.caseId && myIds.has(e.caseId)).sort((a, b) => (b.data || '').localeCompare(a.data || '') || (b.criadoEm || '').localeCompare(a.criadoEm || ''));
+  const real = list.filter(e => !isProv(e));
+  const minhaCat = assoc ? 'Bonificação de associado' : 'Repasse a parceiro';
+  const recebidoProc = real.filter(e => e.tipo === 'receita' && e.categoria !== 'Honorários iniciais').reduce((s, e) => s + num(e.valor), 0);
+  const minhaParte = real.filter(e => e.tipo === 'despesa' && e.categoria === minhaCat).reduce((s, e) => s + num(e.valor), 0);
+  const repassadoPorMim = S.cases.filter(c => resultadoOf(c) === 'recebido' && c.fluxoRecebimento === 'parceiro' && c.financeiroStatus === 'lancado').reduce((s, c) => s + metrics(c).parceiroRecebido, 0);
+  const pend = S.cases.filter(c => resultadoOf(c) === 'recebido' && c.financeiroStatus === 'pendente');
+  const pendV = pend.reduce((s, c) => s + metrics(c).recebido, 0), pendMinha = pend.reduce((s, c) => s + metrics(c).parceiroRecebido, 0);
+  const hiProv = list.filter(e => isProv(e) && e.categoria === 'Honorários iniciais'), hiVenc = hiProv.filter(isLate);
+  const rows = list.map(e => { const c = S.cases.find(x => x.id === e.caseId); return `<tr>
+    <td><span class="mono">${fmtDate(e.data)}</span></td>
+    <td>${c ? `<b>${esc(c.cliente)}</b><span class="sub">${esc(c.tipoAcao || '')} · ${esc(numFmt(c))}</span>` : '<span class="muted">—</span>'}</td>
+    <td><span class="pill ${e.tipo === 'receita' ? 'rec' : 'desp'}">${e.tipo === 'receita' ? 'Receita' : (e.categoria === minhaCat ? (assoc ? 'Bonificação' : 'Repasse') : 'Despesa')}</span>${isProv(e) ? (isLate(e) ? '<span class="pill warn" style="margin-left:4px">Vencida</span>' : '<span class="pill wait" style="margin-left:4px">A receber</span>') : ''}<span class="sub">${esc(e.categoria)}${e.parcela ? ' · parcela ' + esc(e.parcela) : ''}${e.descricao ? ' · ' + esc(e.descricao) : ''}</span></td>
+    <td class="num ${isProv(e) ? 'muted' : ''}">${brl(e.valor)}</td></tr>`; }).join('');
+  return `
+    <div class="page-h"><div><h1>Meu financeiro</h1><p>Só o que diz respeito aos seus processos: honorários iniciais dos seus clientes, recebimentos e ${assoc ? 'sua bonificação' : 'o repasse da sua parte'}. O Financeiro geral do escritório fica com a administração.</p></div></div>
+    <div class="tiles">
+      ${tile('Honorários recebidos', brlShort(recebidoProc), 'nos seus processos, já lançados')}
+      ${tile(assoc ? 'Sua bonificação' : 'Sua parte (repasses)', brlShort(minhaParte + repassadoPorMim), repassadoPorMim ? `inclui ${brlShort(repassadoPorMim)} que você recebeu direto` : 'lançada pelo escritório', 'pos')}
+      ${tile('Aguardando lançamento', brlShort(pendV), pend.length ? `${pend.length} processo${pend.length === 1 ? '' : 's'} recebido${pend.length === 1 ? '' : 's'} · sua parte ${brlShort(pendMinha)}` : 'nenhum recebimento pendente', pend.length ? 'neg' : '')}
+      ${tile('Iniciais a receber', brlShort(hiProv.reduce((s, e) => s + num(e.valor), 0)), hiVenc.length ? `${hiVenc.length} parcela${hiVenc.length === 1 ? '' : 's'} vencida${hiVenc.length === 1 ? '' : 's'} (${brlShort(hiVenc.reduce((s, e) => s + num(e.valor), 0))})` : `${hiProv.length} parcela${hiProv.length === 1 ? '' : 's'} a vencer`, hiVenc.length ? 'neg' : '')}
+    </div>
+    ${pend.length ? `<div class="ro-banner" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="flex:1 1 260px"><b>${pend.length} recebimento${pend.length === 1 ? '' : 's'}</b> que você informou aguarda${pend.length === 1 ? '' : 'm'} o lançamento pelo escritório: ${esc(pend.map(c => `${c.cliente} (${brl(metrics(c).recebido)})`).join(', '))}.</span></div>` : ''}
+    <div class="card-h"><h2>Lançamentos dos meus processos</h2><small>${list.length} · lançados pelo escritório</small></div>
+    ${!S.loaded ? '<div class="empty"><b>Carregando…</b></div>' : list.length ? `<div class="table-wrap"><table style="min-width:640px"><thead><tr><th>Data</th><th>Processo</th><th>Lançamento</th><th class="num">Valor</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty"><b>Nenhum lançamento ainda</b>Quando o escritório lançar honorários iniciais, recebimentos ou repasses dos seus processos, eles aparecem aqui.</div>'}
+    <div class="tfoot"><span>Parcelas de honorários iniciais: a baixa é feita pelo escritório quando o cliente paga.</span><span>Dúvidas sobre um lançamento? Fale com o escritório.</span></div>`;
 }
 
 /* ============ compra de créditos (só administração) ============ */
