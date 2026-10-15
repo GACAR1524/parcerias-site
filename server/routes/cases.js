@@ -14,6 +14,17 @@ const round2 = v => Math.round(v * 100) / 100;
 
 /* Escopo: o parceiro só enxerga (e só grava em) os próprios processos. */
 function scoped(req, row) { return req.user.role === 'admin' || row.partner_id === req.user.partner_id; }
+/* Vínculo com o processo principal: precisa existir, estar no escopo de quem grava, não ser o próprio nem um já vinculado a este (sem ciclos). */
+function checkParent(req, c, selfId) {
+  if (!c.parentId) return null;
+  if (selfId && c.parentId === selfId) return 'Um processo não pode ser vinculado a ele mesmo.';
+  const p = ONE.get(c.parentId);
+  if (!p || !scoped(req, p)) return 'Processo principal não encontrado.';
+  // evita ciclo: o principal (ou a cadeia dele) não pode apontar para este
+  let cur = p, guard = 0;
+  while (cur && cur.parent_id && guard++ < 20) { if (selfId && cur.parent_id === selfId) return 'Esse processo já está vinculado a este; escolha outro principal.'; cur = ONE.get(cur.parent_id); }
+  return null;
+}
 
 /* Lançamentos que um recebimento gera no financeiro (mesma regra da tela). */
 function financeEntriesFor(c, partner) {
@@ -80,14 +91,15 @@ router.post('/', (req, res, next) => {
     const c = caseInput(req.body);
     if (req.user.role === 'partner') { c.titularidade = 'parceria'; c.parceiroId = req.user.partner_id; }
     if (c.titularidade === 'parceria' && !partnerById.get(c.parceiroId)) return res.status(400).json({ error: 'Parceiro inválido.' });
+    const pe = checkParent(req, c, null); if (pe) return res.status(400).json({ error: pe });
     const now = nowISO(), id = uuid();
     db.transaction(() => {
       const fin = settleFinance({ cur: null, c, id, req });
-      db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, honorarios_sucumbenciais, pct_sucumb_parceiro, sucumb_recebido, natureza, fase, resultado, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
+      db.prepare(`INSERT INTO cases (id, partner_id, titularidade, valor_acao, valor_condenacao, pct_honorarios, base_honorarios, valor_debito, valor_devido, valor_reconhecido, honorarios_iniciais, honorarios_sucumbenciais, pct_sucumb_parceiro, sucumb_recebido, parent_id, natureza, fase, resultado, numero_processo, cliente, tipo_acao, data_protocolo, honorarios_pretendidos, custo_lead, pct_parceiro, pct_nosso,
         recebido, valor_recebido, data_recebimento, data_encerramento, fluxo_recebimento, financeiro_status, financeiro_em,
         tem_corretor, nome_corretor, valor_corretor, corretor_pago, observacoes, criado_por, atualizado_por, criado_em, atualizado_em)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.honorariosSucumbenciais, c.pctSucumbParceiro, c.sucumbRecebido, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.honorariosSucumbenciais, c.pctSucumbParceiro, c.sucumbRecebido, c.parentId, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
           c.recebido ? 1 : 0, c.valorRecebido, c.dataRecebimento, c.dataEncerramento, c.fluxoRecebimento, fin.status, fin.em,
           c.temCorretor ? 1 : 0, c.nomeCorretor, c.valorCorretor, c.corretorPago ? 1 : 0, c.observacoes, req.user.id, req.user.id, now, now);
     })();
@@ -103,12 +115,13 @@ router.put('/:id', (req, res, next) => {
     const c = caseInput(req.body);
     if (req.user.role === 'partner') { c.titularidade = 'parceria'; c.parceiroId = cur.partner_id; }
     if (c.titularidade === 'parceria' && !partnerById.get(c.parceiroId)) return res.status(400).json({ error: 'Parceiro inválido.' });
+    const pe = checkParent(req, c, cur.id); if (pe) return res.status(400).json({ error: pe });
     db.transaction(() => {
       const fin = settleFinance({ cur, c, id: cur.id, req });
-      db.prepare(`UPDATE cases SET partner_id=?, titularidade=?, valor_acao=?, valor_condenacao=?, pct_honorarios=?, base_honorarios=?, valor_debito=?, valor_devido=?, valor_reconhecido=?, honorarios_iniciais=?, honorarios_sucumbenciais=?, pct_sucumb_parceiro=?, sucumb_recebido=?, natureza=?, fase=?, resultado=?, numero_processo=?, cliente=?, tipo_acao=?, data_protocolo=?, honorarios_pretendidos=?, custo_lead=?, pct_parceiro=?, pct_nosso=?,
+      db.prepare(`UPDATE cases SET partner_id=?, titularidade=?, valor_acao=?, valor_condenacao=?, pct_honorarios=?, base_honorarios=?, valor_debito=?, valor_devido=?, valor_reconhecido=?, honorarios_iniciais=?, honorarios_sucumbenciais=?, pct_sucumb_parceiro=?, sucumb_recebido=?, parent_id=?, natureza=?, fase=?, resultado=?, numero_processo=?, cliente=?, tipo_acao=?, data_protocolo=?, honorarios_pretendidos=?, custo_lead=?, pct_parceiro=?, pct_nosso=?,
         recebido=?, valor_recebido=?, data_recebimento=?, data_encerramento=?, fluxo_recebimento=?, financeiro_status=?, financeiro_em=?,
         tem_corretor=?, nome_corretor=?, valor_corretor=?, corretor_pago=?, observacoes=?, atualizado_por=?, atualizado_em=? WHERE id=?`)
-        .run(c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.honorariosSucumbenciais, c.pctSucumbParceiro, c.sucumbRecebido, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
+        .run(c.parceiroId, c.titularidade, c.valorAcao, c.valorCondenacao, c.pctHonorarios, c.baseHonorarios, c.valorDebito, c.valorDevido, c.valorReconhecido, c.honorariosIniciais, c.honorariosSucumbenciais, c.pctSucumbParceiro, c.sucumbRecebido, c.parentId, c.natureza, c.fase, c.resultado, c.numeroProcesso, c.cliente, c.tipoAcao, c.dataProtocolo, c.honorariosPretendidos, c.custoLead, c.pctParceiro, c.pctNosso,
           c.recebido ? 1 : 0, c.valorRecebido, c.dataRecebimento, c.dataEncerramento, c.fluxoRecebimento, fin.status, fin.em,
           c.temCorretor ? 1 : 0, c.nomeCorretor, c.valorCorretor, c.corretorPago ? 1 : 0, c.observacoes, req.user.id, nowISO(), cur.id);
     })();
@@ -123,6 +136,7 @@ router.delete('/:id', (req, res, next) => {
     if (!cur || !scoped(req, cur)) return res.status(404).json({ error: 'Processo não encontrado.' });
     db.transaction(() => {
       db.prepare('UPDATE finance_entries SET case_id = NULL WHERE case_id = ?').run(cur.id); // lançamentos ficam, sem o vínculo
+      db.prepare('UPDATE cases SET parent_id = NULL WHERE parent_id = ?').run(cur.id);        // vinculados continuam, soltos
       db.prepare('DELETE FROM cases WHERE id = ?').run(cur.id);
     })();
     audit({ user: req.user, acao: 'excluir_processo', entidade: 'case', entidadeId: cur.id, detalhes: caseRow(cur), ip: req.ip });

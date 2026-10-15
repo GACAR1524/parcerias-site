@@ -39,6 +39,7 @@ function caseInput(b) {
   const concluido = fase === 'julgado' || resultado === 'recebido';
   const c = {
     parceiroId: titularidade === 'escritorio' ? null : str(b.parceiroId, 64),
+    parentId: b.parentId ? str(b.parentId, 64) : null, // processo principal ao qual este está vinculado (agravo, embargos…)
     titularidade,
     valorAcao: b.valorAcao == null || b.valorAcao === '' ? null : money(b.valorAcao),
     valorCondenacao: concluido && b.valorCondenacao != null && b.valorCondenacao !== '' ? money(b.valorCondenacao) : null,
@@ -147,7 +148,8 @@ function partnerInput(b) {
 }
 
 /* ---- controle de ponto ---- */
-const PONTO_TIPOS = ['entrada', 'volta', 'saida'];
+const PONTO_TIPOS = ['entrada', 'almoco', 'volta', 'saida'];
+const PONTO_NOMES = { entrada: 'a entrada', almoco: 'a saída para o almoço', volta: 'a volta do almoço', saida: 'a saída' };
 const coord = (v, label, lim) => { if (v == null || v === '') return null; const n = Number(v); if (!Number.isFinite(n) || Math.abs(n) > lim) fail(`${label} inválida.`); return n; };
 function pontoConfigInput(b) {
   const c = {
@@ -157,6 +159,7 @@ function pontoConfigInput(b) {
     ips: Array.from(new Set((Array.isArray(b.ips) ? b.ips : String(b.ips || '').split(/[\s,;]+/)).map(x => str(x, 64)).filter(Boolean))),
     toleranciaMin: b.toleranciaMin == null || b.toleranciaMin === '' ? 20 : Number(b.toleranciaMin),
     exigirProva: b.exigirProva == null ? true : !!b.exigirProva,
+    usarGps: b.usarGps == null ? true : !!b.usarGps, // false = prova só pela rede do escritório (IP); o aparelho nem pede localização
     fuso: str(b.fuso || 'America/Fortaleza', 64),
     feriados: feriadosInput(b.feriados)
   };
@@ -256,4 +259,4 @@ function financeInput(b) {
   return f;
 }
 
-module.exports = { ValidationError, caseInput, partnerInput, contractInput, creditInput, financeInput, pontoConfigInput, punchInput, adjustInput, jornadaInput, JORNADA_PADRAO, username, password, normUser, cnj };
+module.exports = { ValidationError, caseInput, partnerInput, contractInput, creditInput, financeInput, pontoConfigInput, punchInput, adjustInput, jornadaInput, JORNADA_PADRAO, PONTO_TIPOS, PONTO_NOMES, username, password, normUser, cnj };

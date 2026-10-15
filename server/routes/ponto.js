@@ -11,14 +11,16 @@
 const express = require('express');
 const { db, nowISO, uuid, audit, timeRow, getSetting, setSetting } = require('../db');
 const { requireAuth, requireAdmin, requireEmployee } = require('../auth');
-const { pontoConfigInput, punchInput, adjustInput } = require('../validate');
+const { pontoConfigInput, punchInput, adjustInput, PONTO_NOMES } = require('../validate');
 
 const router = express.Router();
 router.use(requireAuth);
 
-const DEFAULTS = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza', feriados: [] };
+const DEFAULTS = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, usarGps: true, fuso: 'America/Fortaleza', feriados: [] };
 const cfg = () => ({ ...DEFAULTS, ...(getSetting('ponto', {}) || {}) });
-const publicCfg = c => ({ endereco: c.endereco, lat: c.lat, lng: c.lng, raioM: c.raioM, toleranciaMin: c.toleranciaMin, exigirProva: c.exigirProva, fuso: c.fuso, feriados: c.feriados || [], temRede: c.ips.length > 0, configurado: c.lat != null || c.ips.length > 0 });
+const gpsOn = c => c.usarGps !== false && c.lat != null;
+/* O que a equipe enxerga: sem GPS na prova, as coordenadas não vão para o aparelho (ele nem pede a localização). */
+const publicCfg = c => ({ endereco: c.endereco, lat: gpsOn(c) ? c.lat : null, lng: gpsOn(c) ? c.lng : null, raioM: c.raioM, toleranciaMin: c.toleranciaMin, exigirProva: c.exigirProva, usarGps: c.usarGps !== false, fuso: c.fuso, feriados: c.feriados || [], temRede: c.ips.length > 0, configurado: gpsOn(c) || c.ips.length > 0 });
 
 /* Data e hora atuais no fuso do escritório. */
 function officeNow(fuso) {
@@ -81,11 +83,11 @@ router.get('/', (req, res, next) => {
 router.post('/', requireEmployee, (req, res, next) => {
   try {
     const b = punchInput(req.body), c = cfg(), now = officeNow(c.fuso), ip = clientIp(req);
-    if (sameDay.get(req.user.partner_id, now.data, b.tipo)) return res.status(400).json({ error: `Você já registrou ${b.tipo === 'entrada' ? 'a entrada' : b.tipo === 'volta' ? 'a volta do almoço' : 'a saída'} hoje.` });
+    if (sameDay.get(req.user.partner_id, now.data, b.tipo)) return res.status(400).json({ error: `Você já registrou ${PONTO_NOMES[b.tipo]} hoje.` });
     const redeOk = c.ips.length > 0 && ipMatches(ip, c.ips);
     let dist = null, gpsOk = false;
-    if (c.lat != null && b.lat != null) { dist = Math.round(haversine(c.lat, c.lng, b.lat, b.lng)); gpsOk = dist <= c.raioM + Math.min(b.precisao || 0, 50); }
-    const configurado = c.lat != null || c.ips.length > 0;
+    if (gpsOn(c) && b.lat != null) { dist = Math.round(haversine(c.lat, c.lng, b.lat, b.lng)); gpsOk = dist <= c.raioM + Math.min(b.precisao || 0, 50); }
+    const configurado = gpsOn(c) || c.ips.length > 0;
     const status = !c.exigirProva || !configurado || redeOk || gpsOk ? 'valido' : 'pendente';
     const id = uuid(), ts = nowISO();
     INS.run(id, req.user.partner_id, b.tipo, now.data, now.hora, ts, 'app', status, b.lat, b.lng, b.precisao, dist, ip, redeOk ? 1 : 0, gpsOk ? 1 : 0, '', null, null, configurado ? '' : 'sem validação configurada', ts);

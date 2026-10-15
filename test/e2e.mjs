@@ -70,6 +70,23 @@ try {
   await page.click('#c-save');
   await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 2, null, { timeout: 5000 });
   check('processo administrativo aparece com a etiqueta ADM e número livre', (await page.textContent('#view')).includes('ADM') && (await page.textContent('#view')).includes('12345.678901/2026-00'));
+  // honorários zerados (contratação só de um ato) e processo vinculado (agravo ligado ao principal)
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-partner', { index: 1 });
+  await page.fill('#c-num', '08022222220268170001'); await page.fill('#c-cliente', 'Executado Sem Êxito'); await page.fill('#c-tipo', 'Embargos à execução');
+  await page.click('#c-save');
+  await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 3, null, { timeout: 5000 });
+  check('processo salvo com honorários iniciais e finais em zero', (await page.textContent('tr[data-id]:has-text("Executado Sem Êxito")')).replace(/\u00a0/g, ' ').includes('R$ 0,00'));
+  await page.click('tr[data-id]:has-text("Executado Sem Êxito")'); await page.waitForSelector('#case-form');
+  check('edição oferece "+ Processo vinculado" e o campo de vínculo', !!(await page.$('#c-link-new')) && !!(await page.$('#c-parent')));
+  await page.click('#c-link-new'); await page.waitForSelector('#case-form');
+  check('novo processo vinculado vem com cliente e vínculo preenchidos', (await page.inputValue('#c-cliente')) === 'Executado Sem Êxito' && (await page.$eval('#c-parent', s => s.selectedOptions[0].textContent)).includes('0802222-22') && /vinculado/.test(await page.textContent('#case-form .note')));
+  await page.fill('#c-num', '08044444420268170001'); await page.fill('#c-tipo', 'Agravo de instrumento');
+  await page.click('#c-save');
+  await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 4, null, { timeout: 5000 });
+  const rowsVinc = await page.$$eval('tr[data-id]', trs => trs.map(t => ({ txt: t.textContent, linked: t.classList.contains('linked') })));
+  const iMain = rowsVinc.findIndex(r => /Embargos à execução/.test(r.txt) && /1 vinculado/.test(r.txt)), iChild = rowsVinc.findIndex(r => /Agravo de instrumento/.test(r.txt) && /VINCULADO/.test(r.txt));
+  check('agravo aparece com a etiqueta VINCULADO logo abaixo do principal, que mostra "1 vinculado"', iMain >= 0 && iChild === iMain + 1 && rowsVinc[iChild].linked);
   await page.selectOption('#f-nat', 'administrativo'); await page.waitForTimeout(200);
   check('filtro "só administrativos" funciona', (await page.$$('tr[data-id]')).length === 1);
   await page.selectOption('#f-nat', ''); await page.waitForTimeout(200);
@@ -310,6 +327,10 @@ try {
   await page.click('#pv-ok');
   await page.waitForFunction(() => !document.querySelector('.prov-list') && document.querySelector('.provbox') && /9 itens/.test(document.querySelector('.provbox').textContent), null, { timeout: 8000 });
   check('após a baixa restam 1 parcela, os créditos e o processo; o atraso que sobra é só do crédito', (await page.textContent('.provbox')).includes('Em atraso'));
+  await page.click('[data-tab="cases"]'); await page.waitForSelector('tr[data-id]');
+  const rowCD = (await page.textContent('tr[data-id]:has-text("Cliente Direto")')).replace(/\u00a0/g, ' ');
+  check('tabela de processos mostra a situação das parcelas de honorários iniciais (3/4 pagas, em dia)', /Iniciais em dia/.test(rowCD) && /3\/4 parcelas pagas/.test(rowCD) && /próxima/.test(rowCD));
+  await page.click('[data-tab="finance"]'); await page.waitForSelector('.provbox');
   await page.selectOption('#ff-sit', 'provisionado'); await page.waitForTimeout(200);
   check('filtro "só provisionados" lista a parcela futura (e as contas a pagar da recorrência)', (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).filter(t => /parcela/.test(t)).length === 1 && (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).every(t => /4\/4|A pagar/.test(t)));
   await page.selectOption('#ff-sit', 'realizado'); await page.waitForTimeout(200);
@@ -395,7 +416,7 @@ try {
   await page.check('#c-res-rec'); await page.waitForTimeout(150);
   check('parceiro não vê a opção de lançar, e sim o aviso ao escritório', !(await page.$('#c-lancar')) && (await page.textContent('#fin-box')).includes('escritório'));
   await page.click('#c-save');
-  await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 3, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 5, null, { timeout: 5000 });
   await page.click('#btn-logout'); await page.waitForSelector('#login-form');
   await page.fill('#lg-user', 'admin'); await page.fill('#lg-pass', 'senha-forte-123'); await page.click('#lg-btn'); await page.waitForSelector('#tabs');
   await page.click('[data-tab="overview"]'); await page.waitForSelector('.hero');
@@ -517,6 +538,27 @@ try {
   check('removido o dia, o aviso some e sobram os feriados nacionais', !/Hoje não há expediente/.test(await pg.textContent('#view')) && new RegExp(`Feriados e dias sem expediente \\(${nAntes - 1}\\)`).test(await pg.textContent('#view')));
   await pg.click('[data-act="ponto-config"]'); await pg.waitForSelector('#pc-form'); await pg.click('#pc-ok'); await pg.waitForFunction(() => !document.querySelector('#pc-form'), null, { timeout: 8000 }); await pg.waitForTimeout(200);
   check('salvar a configuração geral não apaga os feriados', new RegExp(`Feriados e dias sem expediente \\(${nAntes - 1}\\)`).test(await pg.textContent('#view')));
+  // 4 registros por dia para quem tem 2 turnos: coluna "Almoço" na tabela e no registro manual
+  check('tabela de hoje tem as colunas Entrada, Almoço, Volta e Saída (Carla tem 2 turnos)', /Almoço/.test(await pg.textContent('.espelho thead')) && /Volta/.test(await pg.textContent('.espelho thead')));
+  await pg.click('[data-act="ponto-manual"]'); await pg.waitForSelector('#mp-form');
+  check('registro manual oferece "Saída para o almoço"', (await pg.$$eval('#mp-tipo option', os => os.map(o => o.value))).join(',') === 'entrada,almoco,volta,saida');
+  await pg.click('#mp-cancel');
+  await pg.click('.pcard, [data-tab="partners"]').catch(() => {});
+  await pg.click('[data-tab="partners"]'); await pg.click('.pcard:has-text("Carla Nunes") [data-act="edit-partner"]'); await pg.waitForSelector('#p-form');
+  check('jornada integral do associado prevê 4 registros por dia', /4 registros por dia/.test(await pg.textContent('#p-jhint')));
+  await pg.click('#p-cancel');
+  // prova só pela rede do escritório (IP): o aparelho não pede localização
+  await pg.click('[data-tab="ponto"]'); await pg.waitForSelector('[data-act="ponto-config"]');
+  await pg.click('[data-act="ponto-config"]'); await pg.waitForSelector('#pc-form');
+  await pg.check('#pc-modo-ip'); await pg.waitForTimeout(100);
+  check('modo "só IP" esconde a cerca virtual', !(await pg.isVisible('#pc-gps-box')));
+  await pg.click('#pc-ok'); await pg.waitForFunction(() => !document.querySelector('#pc-form'), null, { timeout: 8000 }); await pg.waitForTimeout(200);
+  check('cabeçalho passa a dizer prova pela rede do escritório', /prova pela rede do escritório/.test(await pg.textContent('.page-h')));
+  const pg4 = await (await browser.newContext({ viewport: { width: 420, height: 860 }, locale: 'pt-BR' })).newPage(); // sem permissão de localização
+  await pg4.goto(BASE); await pg4.waitForSelector('#lg-user'); await pg4.fill('#lg-user', 'pedro.lima'); await pg4.fill('#lg-pass', senhaEst); await pg4.click('#lg-btn'); await pg4.waitForSelector('.punch-card', { timeout: 8000 });
+  await pg4.waitForTimeout(400);
+  check('no modo só IP a tela do estagiário fala da rede do escritório e não tenta a localização', /rede do escritório/.test(await pg4.textContent('#geo-status')) && !/localização/i.test(await pg4.textContent('#geo-status')));
+  await pg4.context().close();
   // bolsa no financeiro
   await pg.click('[data-tab="finance"]'); await pg.waitForSelector('#ff-mes');
   const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0');

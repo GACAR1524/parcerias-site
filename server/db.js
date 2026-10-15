@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS cases (
   honorarios_sucumbenciais REAL NOT NULL DEFAULT 0,
   pct_sucumb_parceiro REAL,
   sucumb_recebido REAL NOT NULL DEFAULT 0,
+  parent_id TEXT,
   natureza TEXT NOT NULL DEFAULT 'judicial',
   fase TEXT NOT NULL DEFAULT 'em_curso',
   resultado TEXT NOT NULL DEFAULT 'em_andamento',
@@ -212,7 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_criado ON audit_log(criado_em);
 db.exec(SCHEMA);
 
 /* ---------- migrações (bancos criados por versões anteriores) ---------- */
-const CURRENT_VERSION = 12;
+const CURRENT_VERSION = 13;
 const MIGRATIONS = {
   // v2: possível data de recebimento nas compras de crédito
   2: () => {
@@ -335,6 +336,11 @@ const MIGRATIONS = {
   12: () => {
     const has = (t, c) => db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c);
     if (!has('partners', 'admissao')) db.exec('ALTER TABLE partners ADD COLUMN admissao TEXT');
+  },
+  // v13: processo vinculado a um principal (agravo de instrumento, embargos à execução…)
+  13: () => {
+    const has = (t, c) => db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c);
+    if (!has('cases', 'parent_id')) db.exec('ALTER TABLE cases ADD COLUMN parent_id TEXT');
   }
 };
 const verRow = db.prepare('SELECT version FROM schema_version').get();
@@ -391,7 +397,7 @@ function caseRow(r) {
   return {
     id: r.id, parceiroId: r.partner_id || null, titularidade: r.titularidade || (r.partner_id ? 'parceria' : 'escritorio'), valorAcao: r.valor_acao, valorCondenacao: r.valor_condenacao, pctHonorarios: r.pct_honorarios,
     baseHonorarios: r.base_honorarios || (r.partner_id ? 'fixo' : 'valor_causa'), valorDebito: r.valor_debito, valorDevido: r.valor_devido, valorReconhecido: r.valor_reconhecido, honorariosIniciais: r.honorarios_iniciais || 0,
-    honorariosSucumbenciais: r.honorarios_sucumbenciais || 0, pctSucumbParceiro: r.pct_sucumb_parceiro == null ? (r.partner_id ? 50 : 0) : r.pct_sucumb_parceiro, sucumbRecebido: r.sucumb_recebido || 0,
+    honorariosSucumbenciais: r.honorarios_sucumbenciais || 0, pctSucumbParceiro: r.pct_sucumb_parceiro == null ? (r.partner_id ? 50 : 0) : r.pct_sucumb_parceiro, sucumbRecebido: r.sucumb_recebido || 0, parentId: r.parent_id || null,
     natureza: r.natureza || 'judicial', fase: r.fase || 'em_curso', resultado: r.resultado || (r.recebido ? 'recebido' : 'em_andamento'),
     numeroProcesso: r.numero_processo, cliente: r.cliente, tipoAcao: r.tipo_acao || '',
     dataProtocolo: r.data_protocolo, honorariosPretendidos: r.honorarios_pretendidos, custoLead: r.custo_lead,

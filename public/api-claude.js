@@ -208,7 +208,7 @@
       const c = pontoCfg(), now = officeNow(c.fuso), s = st.session;
       if (!s || s.role !== 'partner' || !['associado', 'estagiario'].includes(s.tipo)) throw new Error('Só advogados associados e estagiários registram ponto.');
       const dup = await guard(st.db.collection('ponto').where('partnerId', '==', s.partnerId).where('data', '==', now.data).get());
-      if (dup.docs.some(x => x.data().tipo === d.tipo && x.data().status !== 'recusado')) throw new Error(`Você já registrou ${d.tipo === 'entrada' ? 'a entrada' : d.tipo === 'volta' ? 'a volta do almoço' : 'a saída'} hoje.`);
+      if (dup.docs.some(x => x.data().tipo === d.tipo && x.data().status !== 'recusado')) throw new Error(`Você já registrou ${({ entrada: 'a entrada', almoco: 'a saída para o almoço', volta: 'a volta do almoço', saida: 'a saída' })[d.tipo] || d.tipo} hoje.`);
       let dist = null, gpsOk = false;
       if (c.lat != null && d.lat != null) { dist = Math.round(haversine(c.lat, c.lng, d.lat, d.lng)); gpsOk = dist <= c.raioM + Math.min(d.precisao || 0, 50); }
       const configurado = c.lat != null;

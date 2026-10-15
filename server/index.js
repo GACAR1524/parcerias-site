@@ -69,6 +69,8 @@ api.get('/bootstrap', requireAuth, (req, res) => {
     res.json({
       partners: [partnerRow(db.prepare('SELECT p.*, u.usuario FROM partners p LEFT JOIN users u ON u.partner_id = p.id WHERE p.id = ?').get(req.user.partner_id))].filter(Boolean),
       cases: tipo === 'estagiario' ? [] : db.prepare('SELECT * FROM cases WHERE partner_id = ? ORDER BY data_protocolo DESC, criado_em DESC').all(req.user.partner_id).map(caseRow),
+      // associado acompanha o pagamento dos honorários iniciais (parcelas) dos próprios processos; o resto do Financeiro continua só da administração
+      ...(tipo === 'associado' ? { finance: db.prepare("SELECT f.* FROM finance_entries f JOIN cases k ON k.id = f.case_id WHERE k.partner_id = ? AND f.tipo = 'receita' AND f.categoria = 'Honorários iniciais' ORDER BY f.data DESC").all(req.user.partner_id).map(financeRow) } : {}),
       ...(employee ? { ponto: ponto.listEntries({ partnerId: req.user.partner_id, ...range }), pontoConfig: { ...ponto.publicCfg(c), redeOk: ponto.redeOk(req) } } : {})
     });
   }

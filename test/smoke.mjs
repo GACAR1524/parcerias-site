@@ -318,6 +318,24 @@ try {
   check('processo de parceria antigo fica como "valor combinado"', legacy && legacy.baseHonorarios === 'fixo' && legacy.honorariosIniciais === 0, legacy);
   await call('a', 'DELETE', `/cases/${cidX}`);
 
+  // ---- processo vinculado (agravo, embargos…) e honorários zerados ----
+  r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800011-11.2026.8.17.0001', cliente: 'Executado Vinc', tipoAcao: 'Execução / cumprimento de sentença', dataProtocolo: '2026-10-01', baseHonorarios: 'fixo', honorariosPretendidos: 0, honorariosIniciais: 0 });
+  check('processo aceita honorários iniciais e finais zerados', r.status === 201 && r.data.case.honorariosPretendidos === 0 && r.data.case.honorariosIniciais === 0, r);
+  const cidMain = r.data.id;
+  r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800012-12.2026.8.17.0001', cliente: 'Executado Vinc', tipoAcao: 'Agravo de instrumento', dataProtocolo: '2026-10-10', baseHonorarios: 'fixo', honorariosPretendidos: 0, parentId: cidMain });
+  check('agravo gravado vinculado ao processo principal', r.status === 201 && r.data.case.parentId === cidMain, r);
+  const cidChild = r.data.id;
+  r = await call('a', 'PUT', `/cases/${cidMain}`, { titularidade: 'escritorio', numeroProcesso: '0800011-11.2026.8.17.0001', cliente: 'Executado Vinc', tipoAcao: 'Execução / cumprimento de sentença', dataProtocolo: '2026-10-01', baseHonorarios: 'fixo', honorariosPretendidos: 0, parentId: cidChild });
+  check('vínculo em ciclo (principal apontando para o próprio vinculado) é recusado', r.status === 400, r);
+  r = await call('a', 'PUT', `/cases/${cidChild}`, { titularidade: 'escritorio', numeroProcesso: '0800012-12.2026.8.17.0001', cliente: 'Executado Vinc', tipoAcao: 'Agravo de instrumento', dataProtocolo: '2026-10-10', baseHonorarios: 'fixo', honorariosPretendidos: 0, parentId: cidChild });
+  check('vincular a si mesmo é recusado', r.status === 400, r);
+  r = await call('a', 'PUT', `/cases/${cidChild}`, { titularidade: 'escritorio', numeroProcesso: '0800012-12.2026.8.17.0001', cliente: 'Executado Vinc', tipoAcao: 'Agravo de instrumento', dataProtocolo: '2026-10-10', baseHonorarios: 'fixo', honorariosPretendidos: 0, parentId: 'nao-existe' });
+  check('vínculo com processo inexistente é recusado', r.status === 400, r);
+  await call('a', 'DELETE', `/cases/${cidMain}`);
+  r = await call('a', 'GET', '/bootstrap');
+  check('excluir o principal solta o vinculado (continua cadastrado, sem vínculo)', r.data.cases.some(x => x.id === cidChild && x.parentId === null), r.data.cases.find(x => x.id === cidChild));
+  await call('a', 'DELETE', `/cases/${cidChild}`);
+
   // ---- honorários sucumbenciais: dentro da condenação, só dos advogados, divisão própria ----
   r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800009-99.2026.8.17.0001', cliente: 'Condenado S.A.', tipoAcao: 'Ação indenizatória', dataProtocolo: '2026-10-01', valorAcao: 80000, pctHonorarios: 20, fase: 'julgado', valorCondenacao: 110000, honorariosSucumbenciais: 10000 });
   check('julgado: contratuais = 20% da condenação líquida (110 mil − 10 mil de sucumbenciais = 100 mil → 20 mil); sucumbenciais 100% do escritório', r.status === 201 && r.data.case.honorariosPretendidos === 20000 && r.data.case.honorariosSucumbenciais === 10000 && r.data.case.pctSucumbParceiro === 0, r);
@@ -349,6 +367,18 @@ try {
   check('associado guarda a data de admissão', r.status === 201 && r.data.partner.admissao === '2026-03-10' && r.data.partner.salarioFixo === 3000, r);
   r = await call('a', 'POST', '/partners', { tipo: 'associado', nome: 'X', usuario: 'assoc.x', senha: 'senha123', areaAtuacao: 'Cível', admissao: '10/03/2026' });
   check('admissão em formato inválido é recusada', r.status === 400, r);
+  // associado acompanha as parcelas de honorários iniciais dos próprios processos (e só isso do Financeiro)
+  const assocId = (await call('a', 'GET', '/partners')).data.partners.find(x => x.usuario === 'assoc.adm').id;
+  r = await call('a', 'POST', '/cases', { parceiroId: assocId, numeroProcesso: '0800013-13.2026.8.17.0001', cliente: 'Cliente da Associada', tipoAcao: 'Embargos à execução', dataProtocolo: '2026-10-01', baseHonorarios: 'fixo', honorariosPretendidos: 0, honorariosIniciais: 3000, pctParceiro: 20, pctNosso: 80 });
+  const cidAs = r.data.id;
+  await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', valor: 1000, data: '2026-10-05', status: 'realizado', parcela: '1/3', grupoId: 'gAs', caseId: cidAs });
+  await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', valor: 1000, data: '2026-11-05', vencimento: '2026-11-05', status: 'provisionado', parcela: '2/3', grupoId: 'gAs', caseId: cidAs });
+  r = await call('s', 'POST', '/login', { usuario: 'assoc.adm', senha: 'senha123' });
+  r = await call('s', 'GET', '/bootstrap');
+  check('bootstrap do associado traz só as parcelas de honorários iniciais dos próprios processos', r.status === 200 && Array.isArray(r.data.finance) && r.data.finance.length === 2 && r.data.finance.every(e => e.caseId === cidAs && e.categoria === 'Honorários iniciais') && r.data.cases.length === 1, { finance: r.data.finance, cases: r.data.cases.length });
+  r = await call('s', 'GET', '/finance');
+  check('associado continua sem acesso ao Financeiro completo', r.status === 403, r);
+  await call('a', 'DELETE', `/cases/${cidAs}`);
   r = await call('a', 'POST', '/partners', { tipo: 'estagiario', nome: 'Pedro Lima', usuario: 'pedro', senha: 'estagio1', curso: 'Direito', instituicao: 'UFMA', bolsa: 900, jornada: { dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00']] } });
   check('admin cadastra estagiário com bolsa e jornada da manhã', r.status === 201 && r.data.partner.tipo === 'estagiario' && r.data.partner.bolsa === 900 && r.data.partner.jornada.blocos.length === 1 && r.data.partner.pctNossoPadrao === 100, r);
   const eid = r.data.id;
@@ -395,6 +425,19 @@ try {
   check('configuração sem a lista zera os feriados (a tela sempre reenvia a lista atual)', r.status === 200 && r.data.config.feriados.length === 0, r);
   r = await call('e', 'POST', '/ponto', { tipo: 'saida' });
   check('batida pela rede do escritório vale (rede_ok) mesmo sem GPS', r.status === 201 && r.data.entry.status === 'valido' && r.data.entry.redeOk === true && r.data.entry.gpsOk === false && r.data.entry.ip === meuIp, r);
+  r = await call('e', 'POST', '/ponto', { tipo: 'almoco' });
+  check('saída para o almoço é um registro válido (4 registros por dia com 2 turnos)', r.status === 201 && r.data.entry.tipo === 'almoco' && r.data.entry.status === 'valido', r);
+  await call('a', 'DELETE', `/ponto/${r.data.id}`);
+  r = await call('e', 'POST', '/ponto', { tipo: 'cafe' });
+  check('tipo de registro desconhecido é recusado', r.status === 400, r);
+  // prova só pela rede do escritório: o GPS é ignorado e a equipe não recebe as coordenadas
+  r = await call('a', 'PUT', '/ponto/config', { lat: -2.4950, lng: -44.3020, raioM: 150, ips: ['10.255.255.1'], toleranciaMin: 20, exigirProva: true, usarGps: false });
+  check('configuração "só IP" gravada', r.status === 200 && r.data.config.usarGps === false && r.data.config.lat === -2.4950, r);
+  r = await call('e', 'GET', '/bootstrap');
+  check('no modo só IP a equipe não recebe latitude/longitude (aparelho não pede localização)', r.status === 200 && r.data.pontoConfig.usarGps === false && r.data.pontoConfig.lat === null && r.data.pontoConfig.configurado === true, r.data.pontoConfig);
+  r = await call('e', 'POST', '/ponto', { tipo: 'almoco', lat: -2.4953, lng: -44.3024, precisao: 25 });
+  check('no modo só IP, estar dentro do raio não vale: fora da rede fica pendente', r.status === 201 && r.data.entry.status === 'pendente' && r.data.entry.gpsOk === false && r.data.entry.distanciaM === null, r);
+  await call('a', 'DELETE', `/ponto/${r.data.id}`);
   // só GPS: troca o IP autorizado por outro
   r = await call('a', 'PUT', '/ponto/config', { lat: -2.4950, lng: -44.3020, raioM: 150, ips: ['10.255.255.1'], toleranciaMin: 20, exigirProva: true });
   r = await call('e', 'POST', '/ponto', { tipo: 'volta', lat: -2.4953, lng: -44.3024, precisao: 25 });

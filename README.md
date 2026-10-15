@@ -9,7 +9,9 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
   sucumbenciais** dentro dele — só dos advogados, divididos meio a meio na parceria e 100 % do
   escritório nos processos próprios; os contratuais incidem sobre a condenação líquida) e situação
   (ao marcar recebido, o sistema pergunta a condenação total, os sucumbenciais e quanto recebemos
-  de cada um); na defesa do executado, os honorários finais incidem sobre a redução conseguida no débito;
+  de cada um); na defesa do executado, os honorários finais incidem sobre a redução conseguida no
+  débito; qualquer honorário pode ser zero; agravos e embargos ficam **vinculados** ao processo
+  principal; as parcelas de honorários iniciais mostram quem está em dia ou em atraso;
 - **Compra de créditos** judiciais, com possível data de recebimento e linha do tempo;
 - **Contratos com empresas** (prestação de serviços com valor mensal);
 - **Financeiro** mensal (receitas × despesas, lucro/prejuízo), que recebe automaticamente os
@@ -22,8 +24,8 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
   provisionados pelo próprio cadastro (ou por "Provisionar salários e bolsas", para todos de uma
   vez), com aviso para não duplicar lançamentos globais já feitos.
 
-- **Controle de horário dos colaboradores**: advogados associados e estagiários registram entrada, volta do almoço e saída
-  pelo celular; a presença é comprovada por **localização (GPS)** e pela **rede do escritório (IP)**,
+- **Controle de horário dos colaboradores**: advogados associados e estagiários registram entrada, saída para o almoço, volta e saída
+  pelo celular; a presença é comprovada pela **rede do escritório (IP)** e, se o escritório quiser, pela **localização (GPS)**,
   e o que vier de fora fica pendente para a administração aprovar. Espelho mensal, atrasos, faltas,
   saldo de horas, ajustes e exportação; feriados e dias sem expediente (nacionais do ano em um
   clique, recessos, meio período) não contam falta.

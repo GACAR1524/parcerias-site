@@ -74,7 +74,7 @@ const numFmt = c => natOf(c) === 'judicial' ? cnj(c.numeroProcesso) : String(c.n
 const round2 = v => Math.round(num(v) * 100) / 100;
 const natTag = c => (natOf(c) === 'administrativo' ? '<span class="tag adm">ADM</span>' : '<span class="tag jud">JUD</span>') + (isOffice(c) ? '<span class="tag esc" title="Processo só do escritório">ESCRITÓRIO</span>' : '') + (isExec(c) ? '<span class="tag exe" title="Defesa do executado — honorários sobre a redução do débito">EXECUTADO</span>' : '');
 const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-const TIPOS = ['Indenizatória (danos morais e materiais)', 'Ação contra casa de apostas', 'Revisional de contrato bancário', 'Declaratória de inexistência de débito', 'Repetição de indébito', 'Superendividamento', 'Busca e apreensão (defesa)', 'Defesa do executado (embargos / impugnação)', 'Execução / cumprimento de sentença', 'Embargos', 'Outra'];
+const TIPOS = ['Indenizatória (danos morais e materiais)', 'Ação contra casa de apostas', 'Revisional de contrato bancário', 'Declaratória de inexistência de débito', 'Repetição de indébito', 'Superendividamento', 'Busca e apreensão (defesa)', 'Defesa do executado (embargos / impugnação)', 'Embargos à execução', 'Agravo de instrumento', 'Execução / cumprimento de sentença', 'Embargos', 'Outra'];
 function genPassword() {
   const alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
   const v = crypto.getRandomValues(new Uint8Array(10));
@@ -106,6 +106,21 @@ const isOffice = c => c.titularidade === 'escritorio' || !c.parceiroId;
 const isAdmin = () => S.session?.role === 'admin';
 const caseOptions = sel => S.cases.slice().sort((a, b) => (b.dataProtocolo || '').localeCompare(a.dataProtocolo || '') || (b.criadoEm || '').localeCompare(a.criadoEm || '')).map(c => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.cliente)} — ${esc(numFmt(c))}${isOffice(c) ? ' (escritório)' : ' (' + esc(partnerName(c.parceiroId)) + ')'}</option>`).join('');
 const caseTitle = id => { const c = S.cases.find(x => x.id === id); return c ? `Processo ${numFmt(c)} — ${c.cliente}` : 'Processo removido'; };
+/* Vínculo entre processos (agravo, embargos…): principal e vinculados. */
+const parentOf = c => c?.parentId ? S.cases.find(x => x.id === c.parentId) || null : null;
+const childrenOf = c => S.cases.filter(x => x.parentId === c.id);
+const rootOf = c => { let cur = c, guard = 0; while (cur && cur.parentId && guard++ < 20) { const p = parentOf(cur); if (!p) break; cur = p; } return cur; };
+/* Situação das parcelas de honorários iniciais lançadas no Financeiro para o processo. */
+function hiStatus(c) {
+  const list = hiLancados(c.id); if (!list.length) return null;
+  const hoje = todayISO(), pagas = list.filter(e => !isProv(e)), vencidas = list.filter(e => isProv(e) && String(e.vencimento || e.data).slice(0, 10) < hoje), aVencer = list.filter(e => isProv(e) && String(e.vencimento || e.data).slice(0, 10) >= hoje);
+  const total = list.reduce((s, e) => s + num(e.valor), 0), pago = pagas.reduce((s, e) => s + num(e.valor), 0), parcelado = list.some(e => e.parcela);
+  const prox = aVencer.map(e => String(e.vencimento || e.data).slice(0, 10)).sort()[0] || null;
+  const st = !vencidas.length && !aVencer.length ? 'quitado' : vencidas.length ? 'atraso' : 'em_dia';
+  return { n: list.length, pagas: pagas.length, vencidas: vencidas.length, aVencer: aVencer.length, total, pago, parcelado, prox, st, atrasado: vencidas.reduce((s, e) => s + num(e.valor), 0) };
+}
+const hiPill = h => !h ? '' : h.st === 'quitado' ? '<span class="pill ok">Iniciais quitados</span>' : h.st === 'atraso' ? `<span class="pill bad">Iniciais em atraso</span>` : '<span class="pill wait">Iniciais em dia</span>';
+const hiDesc = h => !h ? '' : h.parcelado ? `${h.pagas}/${h.n} parcelas pagas (${brlShort(h.pago)} de ${brlShort(h.total)})${h.vencidas ? ` · ${h.vencidas} vencida${h.vencidas === 1 ? '' : 's'} (${brlShort(h.atrasado)})` : ''}${h.prox ? ` · próxima ${fmtDate(h.prox)}` : ''}` : (h.st === 'quitado' ? `${brlShort(h.pago)} recebidos` : `${brlShort(h.total)} ${h.st === 'atraso' ? 'vencidos' : 'a receber'}`);
 const isAssoc = p => !!p && p.tipo === 'associado';
 const isIntern = p => !!p && p.tipo === 'estagiario';
 const isEmployee = p => isAssoc(p) || isIntern(p);
@@ -521,10 +536,14 @@ function casesTable(list) {
   const admin = isAdmin();
   if (!S.loaded) return `<div class="empty"><b>Carregando…</b></div>`;
   if (!list.length) return `<div class="empty"><b>Nenhum processo ${S.cases.length ? 'encontrado com esses filtros' : 'cadastrado ainda'}</b>${S.cases.length ? 'Ajuste a busca ou o período.' : 'Use “Novo processo” para cadastrar o primeiro.'}</div>`;
-  const rows = list.map(c => { const m = metrics(c); return `<tr data-id="${esc(c.id)}" tabindex="0">
+  // vinculados (agravo, embargos…) aparecem logo abaixo do processo principal quando os dois estão na lista
+  const ids = new Set(list.map(c => c.id)), ordered = [];
+  const pushWithChildren = (c, depth) => { ordered.push({ c, depth }); list.filter(x => x.parentId === c.id).forEach(x => pushWithChildren(x, depth + 1)); };
+  for (const c of list) if (!c.parentId || !ids.has(c.parentId)) pushWithChildren(c, 0);
+  const rows = ordered.map(({ c, depth }) => { const m = metrics(c), kids = childrenOf(c), par = parentOf(c), h = hiStatus(c); return `<tr data-id="${esc(c.id)}" tabindex="0" class="${depth ? 'linked' : ''}">
     <td><span class="mono">${fmtDate(c.dataProtocolo)}</span></td>
-    <td>${natTag(c)} <span class="mono">${esc(numFmt(c))}</span><span class="sub">${esc(c.tipoAcao || '')}</span></td>
-    <td>${esc(c.cliente)}${admin ? `<span class="sub">${isOffice(c) ? 'Só do escritório' : esc(partnerName(c.parceiroId))}${num(c.honorariosIniciais) > 0 ? ` · iniciais ${brlShort(c.honorariosIniciais)}${hiLancados(c.id).length ? '' : ' <b style="color:var(--warn)" title="Honorários iniciais ainda não lançados no Financeiro">lançar</b>'}` : ''}</span>` : (num(c.honorariosIniciais) > 0 ? `<span class="sub">iniciais ${brlShort(c.honorariosIniciais)}</span>` : '')}</td>
+    <td>${depth ? '<span class="link-arm" aria-hidden="true">↳</span>' : ''}${natTag(c)}${par ? `<span class="tag lnk" title="Vinculado ao processo ${esc(numFmt(par))}">VINCULADO</span>` : ''} <span class="mono">${esc(numFmt(c))}</span><span class="sub">${esc(c.tipoAcao || '')}${par ? ` · ${depth ? 'do' : 'vinculado ao'} processo ${esc(numFmt(par))}${depth ? '' : ' (' + esc(par.tipoAcao || '') + ')'}` : ''}${kids.length ? ` · <b>${kids.length} vinculado${kids.length === 1 ? '' : 's'}</b>: ${esc(kids.map(k => k.tipoAcao || numFmt(k)).join(', '))}` : ''}</span></td>
+    <td>${esc(c.cliente)}${admin ? `<span class="sub">${isOffice(c) ? 'Só do escritório' : esc(partnerName(c.parceiroId))}${num(c.honorariosIniciais) > 0 ? ` · iniciais ${brlShort(c.honorariosIniciais)}${hiLancados(c.id).length ? '' : ' <b style="color:var(--warn)" title="Honorários iniciais ainda não lançados no Financeiro">lançar</b>'}` : ''}</span>` : (num(c.honorariosIniciais) > 0 ? `<span class="sub">iniciais ${brlShort(c.honorariosIniciais)}</span>` : '')}${h ? `<span class="sub">${hiPill(h)} <small>${esc(hiDesc(h))}</small></span>` : ''}</td>
     <td class="num">${brl(m.pretendido)}<span class="sub">${baseDesc(c)} · lead ${brl(m.custoLead)}</span></td>
     <td>${statusPill(c)}${resultadoOf(c) === 'recebido' ? `<span class="sub">${brl(m.recebido)}${m.sucRec > 0 ? ` (${brlShort(m.contrRec)} contratuais + ${brlShort(m.sucRec)} sucumb.)` : ''} em ${fmtDate(c.dataRecebimento)}${admin ? (c.financeiroStatus === 'lancado' ? ' · no financeiro' : c.financeiroStatus === 'pendente' ? ' · <b style="color:var(--warn)">lançar no financeiro</b>' : '') : ''}</span>` : resultadoOf(c) === 'perdido' ? `<span class="sub">encerrado em ${fmtDate(c.dataEncerramento)}</span>` : `<span class="sub">${faseOf(c) === 'julgado' ? 'julgado, aguardando' : 'em curso'}</span>`}</td>
     <td class="num">${isOffice(c) ? '100% escritório' : `${num(c.pctParceiro)}% / ${num(c.pctNosso)}%${m.sucumb > 0 || m.sucRec > 0 ? ` <small title="Divisão dos honorários sucumbenciais">(sucumb. ${num(pctSucumbOf(c))}% / ${Math.round((100 - pctSucumbOf(c)) * 100) / 100}%)</small>` : ''}`}<span class="sub">${isOffice(c) ? brlShort(m.nossaParte) : brlShort(m.parteParceiro) + ' / ' + brlShort(m.nossaParte)}</span></td>
@@ -1578,12 +1597,13 @@ function writeError(err) {
 }
 
 /* ---------- processo ---------- */
-function openCaseForm(c) {
-  const admin = isAdmin(), isNew = !c;
-  const office0 = admin && (c ? isOffice(c) : S.f.partner === '_escritorio');
-  const pid = admin ? (office0 ? '' : (c?.parceiroId || (S.f.partner !== '_escritorio' ? S.f.partner : '') || '')) : myPartnerId();
+function openCaseForm(c, prefill) {
+  const admin = isAdmin(), isNew = !c, pf = prefill || {};
+  const base = pf.parent || null; // novo processo vinculado: herda cliente, titularidade e advogado do principal
+  const office0 = admin && (c ? isOffice(c) : base ? isOffice(base) : S.f.partner === '_escritorio');
+  const pid = admin ? (office0 ? '' : (c?.parceiroId || base?.parceiroId || (S.f.partner !== '_escritorio' ? S.f.partner : '') || '')) : myPartnerId();
   const p = partnerById(pid);
-  const d = c || { parceiroId: pid, titularidade: office0 ? 'escritorio' : 'parceria', natureza: 'judicial', fase: 'em_curso', resultado: 'em_andamento', dataProtocolo: todayISO(), pctParceiro: office0 ? 0 : (p ? num(p.pctParceiroPadrao) : 50), pctNosso: office0 ? 100 : (p ? num(p.pctNossoPadrao) : 50), temCorretor: false, corretorPago: false, fluxoRecebimento: 'escritorio' };
+  const d = c || { parceiroId: pid, titularidade: office0 ? 'escritorio' : 'parceria', natureza: 'judicial', fase: 'em_curso', resultado: 'em_andamento', dataProtocolo: todayISO(), pctParceiro: office0 ? 0 : (p ? num(p.pctParceiroPadrao) : 50), pctNosso: office0 ? 100 : (p ? num(p.pctNossoPadrao) : 50), temCorretor: false, corretorPago: false, fluxoRecebimento: 'escritorio', parentId: base?.id || null, cliente: base?.cliente || '' };
   const res0 = resultadoOf(d), fase0 = faseOf(d), nat0 = natOf(d), base0 = c ? baseOf(c) : (office0 ? 'valor_causa' : 'fixo'), concl0 = fase0 === 'julgado' || res0 === 'recebido';
   const psp0 = c ? pctSucumbOf(c) : (office0 ? 0 : (isAssoc(p) ? num(d.pctParceiro) : 50));
   const sucRec0 = c && res0 === 'recebido' ? (has(c.sucumbRecebido) ? num(c.sucumbRecebido) : Math.min(num(c.honorariosSucumbenciais), num(c.valorRecebido))) : 0;
@@ -1592,6 +1612,7 @@ function openCaseForm(c) {
   const ps = S.partners.filter(x => !isIntern(x) && (x.ativo !== false || x.id === pid)).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   openSheet(isNew ? 'Novo processo' : 'Editar processo', `
     <form id="case-form" autocomplete="off" novalidate>
+      ${base ? `<div class="note" style="margin-bottom:12px">Novo processo <b>vinculado</b> a ${esc(base.tipoAcao || 'processo')} ${esc(numFmt(base))} (${esc(base.cliente)}). Cliente, titularidade e advogado já vêm do principal; os honorários são deste processo — pode deixar zerado se o contrato for só do principal.</div>` : ''}
       ${admin ? `<div class="row" style="margin-bottom:12px">
         <label class="check" for="c-tit-par" style="margin:0"><input type="radio" name="c-tit" id="c-tit-par" value="parceria" ${office0 ? '' : 'checked'}><span>Com advogado parceiro ou associado<small>honorários divididos conforme o cadastro</small></span></label>
         <label class="check" for="c-tit-esc" style="margin:0"><input type="radio" name="c-tit" id="c-tit-esc" value="escritorio" ${office0 ? 'checked' : ''}><span>Somente do escritório<small>sem divisão; nossos honorários finais em % do valor da ação</small></span></label>
@@ -1609,8 +1630,9 @@ function openCaseForm(c) {
         <div class="field"><label for="c-num" id="c-num-label">${nat0 === 'judicial' ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo'}</label><input type="text" id="c-num" inputmode="${nat0 === 'judicial' ? 'numeric' : 'text'}" placeholder="${nat0 === 'judicial' ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'}" value="${esc(c?.numeroProcesso || '')}" required></div>
         <div class="field"><label for="c-data">Data do protocolo</label><input type="date" id="c-data" value="${esc((d.dataProtocolo || '').slice(0, 10))}" required></div>
       </div>
-      <div class="field"><label for="c-cliente">Nome do cliente</label><input type="text" id="c-cliente" value="${esc(c?.cliente || '')}" required></div>
+      <div class="field"><label for="c-cliente">Nome do cliente</label><input type="text" id="c-cliente" value="${esc(c?.cliente || d.cliente || '')}" required></div>
       <div class="field"><label for="c-tipo" id="c-tipo-label">${nat0 === 'judicial' ? 'Tipo de ação judicial' : 'Tipo de procedimento administrativo'}</label><input type="text" id="c-tipo" list="tipos-list" value="${esc(c?.tipoAcao || '')}" placeholder="Escolha ou digite" required><datalist id="tipos-list">${Array.from(new Set([...TIPOS, ...S.cases.map(x => x.tipoAcao).filter(Boolean)])).map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
+      <div class="field"><label for="c-parent">Vinculado ao processo <small>(opcional — ex.: agravo de instrumento ou embargos ligados a uma execução)</small></label><select id="c-parent"><option value="">Nenhum — este é o processo principal</option>${S.cases.filter(x => x.id !== c?.id && rootOf(x).id !== c?.id).sort((a, b) => (a.cliente || '').localeCompare(b.cliente || '') || (b.dataProtocolo || '').localeCompare(a.dataProtocolo || '')).map(x => `<option value="${esc(x.id)}" ${x.id === (d.parentId || '') ? 'selected' : ''}>${esc(x.cliente)} — ${esc(numFmt(x))} · ${esc(x.tipoAcao || '')}</option>`).join('')}</select>${c && childrenOf(c).length ? `<p class="hint" style="margin:4px 0 0">Este processo tem ${childrenOf(c).length} vinculado${childrenOf(c).length === 1 ? '' : 's'}: ${esc(childrenOf(c).map(k => `${k.tipoAcao || 'processo'} ${numFmt(k)}`).join('; '))}.</p>` : ''}</div>
       <fieldset id="c-values"><legend>Honorários</legend>
         <div class="subhead">Entrada</div>
         <div class="row">
@@ -1698,7 +1720,7 @@ function openCaseForm(c) {
       <div class="summary" id="c-summary"></div>
       <p class="err" id="c-err"></p>
       <div class="form-actions">
-        ${!isNew ? '<button class="btn btn-danger left" type="button" id="c-del">Excluir</button>' : ''}
+        ${!isNew ? '<button class="btn btn-danger left" type="button" id="c-del">Excluir</button><button class="btn left" type="button" id="c-link-new" title="Cadastrar um agravo, embargos ou outro processo ligado a este">+ Processo vinculado</button>' : ''}
         <button class="btn" type="button" id="c-cancel">Cancelar</button>
         <button class="btn btn-primary" type="submit" id="c-save">${isNew ? 'Cadastrar processo' : 'Salvar alterações'}</button>
       </div>
@@ -1772,7 +1794,7 @@ function openCaseForm(c) {
   const hiBox = () => {
     const box = g('c-hini-box'), v = parseMoney(g('c-hini').value), lanc = c ? hiLancados(c.id) : [];
     if (!(v > 0) && !lanc.length) { box.innerHTML = ''; return; }
-    if (lanc.length) { const tot = lanc.reduce((a, e) => a + num(e.valor), 0); box.innerHTML = `<p class="hint" style="margin:-4px 0 10px">No Financeiro: ${lanc.length} lançamento${lanc.length === 1 ? '' : 's'} de honorários iniciais (${brl(tot)}${lanc.some(isProv) ? ', com parcelas provisionadas' : ''}).</p>`; return; }
+    if (lanc.length) { const h = hiStatus(c); box.innerHTML = `<div class="note" style="margin:-4px 0 10px">${hiPill(h)} <b>${h.parcelado ? `${h.pagas} de ${h.n} parcelas pagas` : (h.st === 'quitado' ? 'Recebidos' : 'A receber')}</b> — ${brl(h.pago)} de ${brl(h.total)}${h.vencidas ? ` · <span class="bad">${h.vencidas} parcela${h.vencidas === 1 ? '' : 's'} vencida${h.vencidas === 1 ? '' : 's'} (${brl(h.atrasado)})</span>` : ''}${h.prox ? ` · próxima vence em ${fmtDate(h.prox)}` : ''}.${admin ? ' A baixa das parcelas é feita em “Créditos provisionados”, no Financeiro.' : ' A baixa é feita pelo escritório; avise quando o cliente pagar.'}</div>`; return; }
     if (!admin) { box.innerHTML = '<p class="hint" style="margin:-4px 0 10px">O escritório fará o lançamento desses honorários no Financeiro.</p>'; return; }
     if (isNew) box.innerHTML = `<label class="check" for="c-hini-fin"><input type="checkbox" id="c-hini-fin" ${g('c-hini-fin') ? (g('c-hini-fin').checked ? 'checked' : '') : 'checked'}><span>Lançar no Financeiro ao salvar<small>abre a receita já preenchida, para escolher à vista ou parcelado</small></span></label>`;
     else box.innerHTML = `<div class="note" style="margin-bottom:10px">Honorários iniciais ainda não lançados no Financeiro. <button class="btn btn-sm" type="button" id="c-hini-go">Lançar agora</button></div>`;
@@ -1841,6 +1863,7 @@ function openCaseForm(c) {
       pctSucumbParceiro: off ? 0 : num(g('c-psp').value),
       pctHonorarios: curBase() !== 'fixo' ? num(g('c-phon').value) : null,
       honorariosIniciais: parseMoney(g('c-hini').value),
+      parentId: g('c-parent').value || null,
       natureza: curNat(), fase: curFase(), resultado: res,
       numeroProcesso: curNat() === 'judicial' ? cnj(g('c-num').value) : g('c-num').value.trim(), cliente: g('c-cliente').value.trim(), tipoAcao: g('c-tipo').value.trim(), dataProtocolo: g('c-data').value,
       honorariosPretendidos: parseMoney(g('c-hon').value), custoLead: parseMoney(g('c-lead').value),
@@ -1871,8 +1894,9 @@ function openCaseForm(c) {
   }
   summary();
   g('c-cancel').addEventListener('click', closeSheet);
+  g('c-link-new')?.addEventListener('click', () => { closeSheet(); openCaseForm(null, { parent: c }); });
   g('c-del')?.addEventListener('click', () => {
-    g('c-confirm').innerHTML = `<div class="confirm"><p>Excluir o processo <b>${esc(numFmt(c))}</b> de ${esc(c.cliente)}? Esta ação não pode ser desfeita.</p><button class="btn btn-danger btn-sm" type="button" id="c-del-yes">Excluir definitivamente</button><button class="btn btn-sm" type="button" id="c-del-no">Manter</button></div>`;
+    g('c-confirm').innerHTML = `<div class="confirm"><p>Excluir o processo <b>${esc(numFmt(c))}</b> de ${esc(c.cliente)}? Esta ação não pode ser desfeita.${childrenOf(c).length ? ` Os ${childrenOf(c).length} processos vinculados continuam cadastrados, sem o vínculo.` : ''}</p><button class="btn btn-danger btn-sm" type="button" id="c-del-yes">Excluir definitivamente</button><button class="btn btn-sm" type="button" id="c-del-no">Manter</button></div>`;
     $('#c-del-no').addEventListener('click', () => { g('c-confirm').innerHTML = ''; });
     $('#c-del-yes').addEventListener('click', async () => {
       try { await api.deleteCase(c.id); toast('Processo excluído.'); closeSheet(); } catch (err) { g('c-err').textContent = writeError(err); }
@@ -1885,14 +1909,13 @@ function openCaseForm(c) {
     if (data.baseHonorarios === 'reducao_debito' && data.valorDebito != null && data.valorDevido != null && data.valorDevido > data.valorDebito) return err.textContent = 'O valor que entendemos devido não pode ser maior que o valor cobrado na execução.';
     if (data.valorCondenacao != null && data.honorariosSucumbenciais > data.valorCondenacao) return err.textContent = 'Os honorários sucumbenciais não podem ser maiores que o valor total da condenação.';
     if (data.resultado === 'recebido' && data.baseHonorarios !== 'reducao_debito' && data.valorCondenacao == null && !(data.honorariosSucumbenciais > 0) && !(data.honorariosPretendidos > 0)) return err.textContent = 'Informe o valor total da condenação e quanto dela é honorário sucumbencial.';
-    if (data.resultado !== 'perdido' && !(data.honorariosPretendidos > 0) && !(data.resultado === 'recebido' && data.valorRecebido > 0)) return err.textContent = data.baseHonorarios === 'reducao_debito' ? 'Informe o valor cobrado na execução e o valor devido (ou os honorários previstos).' : data.baseHonorarios === 'valor_causa' ? (concl(data) ? 'Informe o valor total da condenação e os sucumbenciais (ou os honorários contratuais).' : 'Informe o valor pretendido da ação e o % de honorários (ou os honorários previstos).') : 'Informe o valor dos honorários finais combinados.';
     if (!data.numeroProcesso) return err.textContent = 'Informe o número do processo.';
     if (!data.cliente) return err.textContent = 'Informe o nome do cliente.';
     if (!data.tipoAcao) return err.textContent = 'Informe o tipo de ação.';
     if (!data.dataProtocolo) return err.textContent = 'Informe a data do protocolo.';
     if (Math.abs(data.pctParceiro + data.pctNosso - 100) > 0.01) return err.textContent = 'Os percentuais precisam somar 100%.';
     if (data.resultado === 'recebido' && !data.dataRecebimento) return err.textContent = 'Informe a data do recebimento.';
-    if (data.resultado === 'recebido' && !(data.valorRecebido > 0)) return err.textContent = 'Informe quanto recebemos (honorários contratuais e/ou sucumbenciais).';
+    if (data.resultado === 'recebido' && !(data.valorRecebido > 0) && !f.dataset.zeroOk) { err.textContent = 'Nenhum valor recebido informado (contratuais e sucumbenciais zerados). Clique em salvar de novo para confirmar que não houve recebimento.'; f.dataset.zeroOk = '1'; return; }
     if (data.resultado === 'perdido' && !data.dataEncerramento) return err.textContent = 'Informe a data do encerramento.';
     if (isNew) {
       const digits = data.numeroProcesso.replace(/\D/g, '');
@@ -2021,7 +2044,7 @@ function openPartnerForm(p, presetTipo) {
     const blocos = [[g('p-j1a').value, g('p-j1b').value]]; if (g('p-j2').checked) blocos.push([g('p-j2a').value, g('p-j2b').value]);
     return { dias, blocos };
   };
-  const jhint = () => { try { const j = collectJornada(); const ok = j.blocos.every(b => b[0] && b[1] && toMin(b[1]) > toMin(b[0])) && (j.blocos.length < 2 || toMin(j.blocos[1][0]) >= toMin(j.blocos[0][1])); g('p-jhint').textContent = ok ? `${j.blocos.length === 2 ? '3 registros por dia (entrada, volta do almoço e saída)' : '2 registros por dia (entrada e saída)'} · ${fmtMin(previstoMin(j))} previstas por dia útil.` : 'Confira os horários: cada turno precisa terminar depois de começar e o 2º turno vem depois do 1º.'; } catch { g('p-jhint').textContent = ''; } };
+  const jhint = () => { try { const j = collectJornada(); const ok = j.blocos.every(b => b[0] && b[1] && toMin(b[1]) > toMin(b[0])) && (j.blocos.length < 2 || toMin(j.blocos[1][0]) >= toMin(j.blocos[0][1])); g('p-jhint').textContent = ok ? `${j.blocos.length === 2 ? '4 registros por dia (entrada, saída para o almoço, volta e saída)' : '2 registros por dia (entrada e saída)'} · ${fmtMin(previstoMin(j))} previstas por dia útil.` : 'Confira os horários: cada turno precisa terminar depois de começar e o 2º turno vem depois do 1º.'; } catch { g('p-jhint').textContent = ''; } };
   /* Pagamento mensal no Financeiro (salário do associado / bolsa do estagiário): provisiona um lançamento por mês. */
   const admin = isAdmin();
   const curPay = () => curTipo() === 'estagiario' ? parseMoney(g('p-bolsa').value) : parseMoney(g('p-sal').value);
@@ -2256,7 +2279,7 @@ function openPasswordForm() {
 
 /* ============ controle de ponto ============ */
 /* Jornadas: dias da semana (0 = domingo) e 1 ou 2 turnos. Batidas esperadas: entrada (início do 1º turno),
-   volta do almoço (início do 2º turno, quando houver) e saída (fim do último turno). */
+   saída para o almoço (fim do 1º turno) e volta (início do 2º, quando houver) e saída (fim do último turno). */
 const JORNADAS = {
   integral: { nome: 'Integral — 08:00 às 12:00 e 14:00 às 17:30', dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00'], ['14:00', '17:30']] },
   manha: { nome: 'Manhã — 08:00 às 12:00', dias: [1, 2, 3, 4, 5], blocos: [['08:00', '12:00']] },
@@ -2264,15 +2287,18 @@ const JORNADAS = {
 };
 const WD = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 const WD_FULL = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
-const PT_TIPOS = { entrada: 'Entrada', volta: 'Volta do almoço', saida: 'Saída' };
+const PT_TIPOS = { entrada: 'Entrada', almoco: 'Saída para o almoço', volta: 'Volta do almoço', saida: 'Saída' };
 const jornadaOf = p => (p?.jornada && Array.isArray(p.jornada.blocos) && p.jornada.blocos.length) ? { dias: p.jornada.dias || [1, 2, 3, 4, 5], blocos: p.jornada.blocos } : (isIntern(p) ? JORNADAS.manha : JORNADAS.integral);
 const jornadaKey = j => Object.keys(JORNADAS).find(k => JSON.stringify(JORNADAS[k].blocos) === JSON.stringify(j.blocos)) || 'custom';
 const jornadaLabel = j => j.blocos.map(b => `${b[0]}–${b[1]}`).join(' e ') + (JSON.stringify(j.dias) === JSON.stringify([1, 2, 3, 4, 5]) ? '' : ' · ' + j.dias.map(d => WD[d]).join(', '));
 const toMin = h => h ? +String(h).slice(0, 2) * 60 + +String(h).slice(3, 5) : null;
 const fmtMin = m => { const sg = m < 0 ? '−' : ''; m = Math.abs(Math.round(m)); return `${sg}${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; };
 const hhmm = h => h ? String(h).slice(0, 5) : '—';
-const planOf = j => { const b = j.blocos, plan = [{ tipo: 'entrada', hora: b[0][0] }]; if (b.length > 1) plan.push({ tipo: 'volta', hora: b[1][0] }); plan.push({ tipo: 'saida', hora: b[b.length - 1][1] }); return plan; };
+/* 4 registros com 2 turnos (entrada, saída para o almoço, volta e saída); 2 registros com turno único. */
+const planOf = j => { const b = j.blocos, plan = [{ tipo: 'entrada', hora: b[0][0] }]; if (b.length > 1) { plan.push({ tipo: 'almoco', hora: b[0][1] }); plan.push({ tipo: 'volta', hora: b[1][0] }); } plan.push({ tipo: 'saida', hora: b[b.length - 1][1] }); return plan; };
 const previstoMin = j => j.blocos.reduce((sum, b) => sum + toMin(b[1]) - toMin(b[0]), 0);
+/* Minutos previstos já decorridos até o horário `cur` (para o saldo de hoje não aparecer negativo no meio do expediente). */
+const previstoAte = (j, cur) => j.blocos.reduce((sum, b) => sum + Math.max(0, Math.min(cur, toMin(b[1])) - toMin(b[0])), 0);
 const countsPunch = e => e.status === 'valido' || e.status === 'aprovado';
 const weekdayOf = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getDay(); };
 const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -2311,16 +2337,17 @@ function dayCalc(p, date) {
   const pend = all.filter(e => e.status === 'pendente');
   const util = !semExp && j.dias.includes(weekdayOf(date)) && activeOn(p, date);
   const t = k => by[k] ? toMin(by[k].hora) : null;
-  const ent = t('entrada'), vol = t('volta'), sai = t('saida');
+  const ent = t('entrada'), alm = t('almoco'), vol = t('volta'), sai = t('saida');
   const two = b.length > 1, isToday = date === today, cur = toMin(nowHM());
   let feito = 0;
-  if (semExp) { // dia sem expediente: conta da entrada até a saída (ou até agora), sem descontar almoço previsto
-    if (ent != null) { const fimE = sai != null ? sai : (isToday ? cur : null); if (fimE != null) feito = Math.max(0, fimE - ent) - (vol != null && sai != null && full.blocos.length > 1 ? Math.max(0, vol - toMin(full.blocos[0][1])) : 0); }
+  if (semExp) { // dia sem expediente: conta da entrada até a saída (ou até agora), descontando o almoço registrado
+    if (ent != null) { const fimE = sai != null ? sai : (isToday ? cur : null); if (fimE != null) feito = Math.max(0, fimE - ent) - (alm != null && vol != null ? Math.max(0, vol - alm) : (vol != null && sai != null && full.blocos.length > 1 ? Math.max(0, vol - toMin(full.blocos[0][1])) : 0)); }
   } else {
     if (ent != null) {
-      let end1 = two ? toMin(b[0][1]) : sai;           // 1º turno: até o fim previsto (quando há 2 turnos) ou até a saída
+      // 1º turno: da entrada até a saída para o almoço (se registrada); sem ela, até o fim previsto do turno (2 turnos) ou até a saída (turno único)
+      let end1 = two ? (alm != null ? alm : toMin(b[0][1])) : sai;
       if (end1 == null && isToday) end1 = cur;          // turno único ainda em andamento
-      if (end1 != null) { if (isToday && two) end1 = Math.min(end1, Math.max(cur, ent)); feito += Math.max(0, end1 - ent); }
+      if (end1 != null) { if (isToday && two && alm == null) end1 = Math.min(end1, Math.max(cur, ent)); feito += Math.max(0, end1 - ent); }
     }
     if (two && vol != null) { if (sai != null) feito += Math.max(0, sai - vol); else if (isToday) feito += Math.max(0, cur - vol); }
   }
@@ -2341,7 +2368,9 @@ function dayCalc(p, date) {
   else if (isToday && missing.length) status = 'em_andamento';
   else if (missing.length) status = 'incompleto';
   else status = atraso > 0 ? 'atraso' : 'ok';
-  return { j, plan, by, pend, util, fer, semExp, feito, previsto: util ? previstoMin(j) : 0, atraso, extra, antecipada, missing, next, status, valid, all };
+  // previsto de hoje: só o que já decorreu do expediente (o dia inteiro entra quando acaba), para o saldo não ficar "devendo" no meio do dia
+  const previsto = !util ? 0 : (isToday && status !== 'falta' ? Math.min(previstoMin(j), previstoAte(j, cur)) : previstoMin(j));
+  return { j, plan, by, pend, util, fer, semExp, feito, previsto, atraso, extra, antecipada, missing, next, status, valid, all };
 }
 function monthCalc(p, ym) {
   const today = todayISO(), [y, m] = ym.split('-'), n = lastDay(y, m);
@@ -2393,6 +2422,7 @@ function geoText() {
   const c = S.pontoConfig || {}, g = S.geo, net = c.redeOk ? '<span class="ok">Você está na rede do escritório ✓</span>' : '';
   const fmtD = d => d >= 1000 ? (d / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' km' : d + ' m';
   let geo = '';
+  if (c.configurado && c.lat == null) return net || '<span class="warn">Você não está na rede do escritório.</span> Conecte o aparelho ao Wi-Fi do escritório antes de registrar; fora dela o horário fica pendente de validação.';
   if (!c.configurado) geo = 'O escritório ainda não configurou a validação de presença; o horário será registrado sem prova.';
   else if (g.state === 'checking') geo = 'Verificando sua localização…';
   else if (g.state === 'inside') geo = `<span class="ok">Você está a ${fmtD(g.dist)} do escritório ✓</span>${g.precisao > 100 ? ` <small>(precisão de ${g.precisao} m)</small>` : ''}`;
@@ -2434,17 +2464,17 @@ function renderMyPonto() {
     </div>
     <div class="card-h"><h2>Espelho de ${ymLabel(ym)}</h2><div class="toolbar">${monthSelect()}${S.canWrite ? '<button class="btn btn-sm" type="button" data-act="ask-adjust">Esqueci de registrar — pedir ajuste</button>' : ''}</div></div>
     ${espelhoTable(p, mc, false)}
-    <div class="tfoot"><span>Horas do 1º turno contam da entrada até o fim previsto do turno; do 2º, da volta até a saída.</span><span>Ajustes aprovados pelo escritório entram no espelho.</span></div>`;
+    <div class="tfoot"><span>Horas do 1º turno contam da entrada até a saída para o almoço; do 2º, da volta até a saída. O saldo do dia de hoje acompanha o expediente já decorrido.</span><span>Ajustes aprovados pelo escritório entram no espelho.</span></div>`;
 }
 function espelhoTable(p, mc, admin) {
   const two = jornadaOf(p).blocos.length > 1;
   const rows = mc.dias.slice().reverse().filter(d => d.status !== 'folga' || d.valid.length || d.pend.length).map(d => `<tr class="${d.status}">
     <td><span class="mono">${fmtDate(d.date)}</span><span class="sub">${WD[weekdayOf(d.date)]}</span></td>
-    <td>${punchCell(d, 'entrada')}</td>${two ? `<td>${punchCell(d, 'volta')}</td>` : ''}<td>${punchCell(d, 'saida')}</td>
+    <td>${punchCell(d, 'entrada')}</td>${two ? `<td>${punchCell(d, 'almoco')}</td><td>${punchCell(d, 'volta')}</td>` : ''}<td>${punchCell(d, 'saida')}</td>
     <td class="num">${d.feito ? fmtMin(d.feito) : '—'}${d.previsto ? `<span class="sub">de ${fmtMin(d.previsto)}</span>` : ''}</td>
     <td>${dayPill(d.status)}${d.fer ? `<span class="sub">${esc(feriadoLabel(d.fer))}${d.semExp && d.feito ? ' · horas contam como extras' : ''}</span>` : d.atraso ? `<span class="sub">atraso ${fmtMin(d.atraso)}</span>` : d.extra ? `<span class="sub">+${fmtMin(d.extra)} além do horário</span>` : d.antecipada && d.status !== 'incompleto' ? `<span class="sub">saiu ${fmtMin(d.antecipada)} antes</span>` : ''}</td>
   </tr>`).join('');
-  return `<div class="table-wrap"><table class="espelho"><thead><tr><th>Dia</th><th>Entrada</th>${two ? '<th>Volta</th>' : ''}<th>Saída</th><th class="num">Horas</th><th>Situação</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">Nenhum dia útil ainda neste mês.</td></tr>`}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="espelho"><thead><tr><th>Dia</th><th>Entrada</th>${two ? '<th>Almoço</th><th>Volta</th>' : ''}<th>Saída</th><th class="num">Horas</th><th>Situação</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="muted">Nenhum dia útil ainda neste mês.</td></tr>`}</tbody></table></div>`;
 }
 async function doPunch(tipo) {
   const btn = $('.punch-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Registrando…'; }
@@ -2488,17 +2518,18 @@ function openAdjustForm() {
 
 /* ---- administração: aba Ponto ---- */
 function renderPonto() {
-  const c = S.pontoConfig || {}, configured = c.lat != null || (c.ips && c.ips.length), today = todayISO(), ym = S.fpt.mes;
+  const c = S.pontoConfig || {}, configured = (c.usarGps !== false && c.lat != null) || (c.ips && c.ips.length), today = todayISO(), ym = S.fpt.mes;
   const list = employees().filter(p => !S.fpt.pessoa || p.id === S.fpt.pessoa);
   const todayCalc = list.map(p => ({ p, d: dayCalc(p, today) }));
-  const inOffice = todayCalc.filter(x => x.d.status === 'em_andamento' && x.d.by.entrada && !x.d.by.saida && (!x.d.plan.some(q => q.tipo === 'volta') || x.d.by.volta || nowHM() < x.d.j.blocos[0][1])).length;
+  // no escritório agora: entrou, não saiu e não está no almoço (saiu para almoçar sem ter voltado; sem a saída registrada, presume o fim do 1º turno)
+  const inOffice = todayCalc.filter(x => x.d.status === 'em_andamento' && x.d.by.entrada && !x.d.by.saida && !(x.d.by.almoco && !x.d.by.volta) && (!x.d.plan.some(q => q.tipo === 'volta') || x.d.by.volta || x.d.by.almoco || nowHM() < x.d.j.blocos[0][1])).length;
   const lateToday = todayCalc.filter(x => x.d.atraso > 0).length, absent = todayCalc.filter(x => x.d.status === 'ausente').length;
   const pend = pontoPendentes().filter(e => !S.fpt.pessoa || e.partnerId === S.fpt.pessoa).sort((a, b) => (a.data + a.hora).localeCompare(b.data + b.hora));
   const two = list.some(p => jornadaOf(p).blocos.length > 1);
   const todayRows = todayCalc.map(({ p, d }) => `<tr data-pessoa="${esc(p.id)}" tabindex="0">
     <td><b>${esc(p.nome)}</b><span class="sub">${esc(partnerKind(p))}</span></td>
     <td><span class="mono">${jornadaLabel(jornadaOf(p))}</span>${d.fer ? `<span class="sub">${esc(d.semExp ? 'sem expediente hoje' : 'expediente ' + (d.fer.turno === 'manha' ? 'só à tarde' : 'só de manhã'))}</span>` : d.util ? '' : '<span class="sub">folga hoje</span>'}</td>
-    <td>${punchCell(d, 'entrada')}</td>${two ? `<td>${punchCell(d, 'volta')}</td>` : ''}<td>${punchCell(d, 'saida')}</td>
+    <td>${punchCell(d, 'entrada')}</td>${two ? `<td>${punchCell(d, 'almoco')}</td><td>${punchCell(d, 'volta')}</td>` : ''}<td>${punchCell(d, 'saida')}</td>
     <td class="num">${d.feito ? fmtMin(d.feito) : '—'}</td>
     <td>${dayPill(d.status)}${d.atraso ? `<span class="sub">atraso ${fmtMin(d.atraso)}</span>` : ''}</td>
   </tr>`).join('');
@@ -2514,7 +2545,7 @@ function renderPonto() {
     <span class="pr-main"><b>${esc(p?.nome || '—')} · ${PT_TIPOS[e.tipo] || e.tipo} às ${hhmm(e.hora)} em ${fmtDate(e.data)}</b><small>${e.origem === 'ajuste' ? 'Pedido de ajuste: ' + esc(e.justificativa || '—') : 'Registro fora do escritório: ' + esc(proofLabel(e)) + (e.ip ? ' · IP ' + esc(e.ip) : '') + (e.precisao ? ' · precisão ' + Math.round(e.precisao) + ' m' : '')}</small></span>
     <span class="pr-side"><button class="btn btn-sm btn-primary" type="button" data-act="ponto-decide" data-id="${esc(e.id)}" data-dec="aprovado">Aprovar</button><button class="btn btn-sm" type="button" data-act="ponto-decide" data-id="${esc(e.id)}" data-dec="recusado">Recusar</button></span></div>`; }).join('');
   return `
-    <div class="page-h"><div><h1>Controle de horário dos colaboradores</h1><p>Entrada, volta do almoço e saída de associados e estagiários, com prova por localização${api.features.ip ? ' e rede do escritório' : ''}.</p></div>
+    <div class="page-h"><div><h1>Controle de horário dos colaboradores</h1><p>Entrada, saída para o almoço, volta e saída de associados e estagiários, com prova ${S.pontoConfig?.usarGps === false ? 'pela rede do escritório' : 'por localização' + (api.features.ip ? ' e rede do escritório' : '')}.</p></div>
       <div class="toolbar">
         ${monthSelect()}
         <select id="fpt-pessoa" data-fpt="pessoa" aria-label="Pessoa"><option value="">Toda a equipe</option>${employees().map(p => `<option value="${esc(p.id)}" ${S.fpt.pessoa === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
@@ -2531,7 +2562,7 @@ function renderPonto() {
       ${tile('Pendências', String(pend.length), 'registros fora do escritório e ajustes', pend.length ? 'neg' : '')}
     </div>
     <div class="card-h"><h2>Hoje, ${fmtDate(today)}</h2><small>${WD_FULL[weekdayOf(today)]}</small></div>
-    <div class="table-wrap"><table class="espelho"><thead><tr><th>Pessoa</th><th>Jornada</th><th>Entrada</th>${two ? '<th>Volta</th>' : ''}<th>Saída</th><th class="num">Horas</th><th>Situação</th></tr></thead><tbody>${todayRows}</tbody></table></div>
+    <div class="table-wrap"><table class="espelho"><thead><tr><th>Pessoa</th><th>Jornada</th><th>Entrada</th>${two ? '<th>Almoço</th><th>Volta</th>' : ''}<th>Saída</th><th class="num">Horas</th><th>Situação</th></tr></thead><tbody>${todayRows}</tbody></table></div>
     ${pend.length ? `<div class="card-h" style="margin-top:18px"><h2>Pendências</h2><small>${pend.length} para decidir</small></div><div class="prov-list" style="max-height:none">${pendRows}</div>` : ''}
     <div class="card-h" style="margin-top:18px"><h2>Resumo de ${ymLabel(ym)}</h2><small>clique na pessoa para ver o espelho dia a dia</small></div>
     <div class="table-wrap"><table><thead><tr><th>Pessoa</th><th class="num">Dias úteis</th><th class="num">Presenças</th><th class="num">Faltas</th><th class="num">Atrasos</th><th class="num">Horas</th><th class="num">Saldo</th></tr></thead><tbody>${monthRows}</tbody></table></div>
@@ -2557,7 +2588,7 @@ function openManualPunch(pid) {
       <div class="field"><label for="mp-pessoa">Pessoa</label><select id="mp-pessoa">${list.map(p => `<option value="${esc(p.id)}" ${p.id === pid ? 'selected' : ''}>${esc(p.nome)} — ${esc(partnerKind(p))}</option>`).join('')}</select></div>
       <div class="row">
         <div class="field"><label for="mp-data">Dia</label><input type="date" id="mp-data" value="${todayISO()}" max="${todayISO()}" required></div>
-        <div class="field"><label for="mp-tipo">Registro</label><select id="mp-tipo"><option value="entrada">Entrada</option><option value="volta">Volta do almoço</option><option value="saida">Saída</option></select></div>
+        <div class="field"><label for="mp-tipo">Registro</label><select id="mp-tipo"><option value="entrada">Entrada</option><option value="almoco">Saída para o almoço</option><option value="volta">Volta do almoço</option><option value="saida">Saída</option></select></div>
         <div class="field"><label for="mp-hora">Horário</label><input type="time" id="mp-hora" value="08:00" required></div>
       </div>
       <div class="field"><label for="mp-obs">Observação <small>(opcional)</small></label><input type="text" id="mp-obs" placeholder="ex.: informado por WhatsApp às 8h02"></div>
@@ -2585,11 +2616,18 @@ async function decidePunch(id, decisao) {
   try { await api.decidePunch(id, 'aprovado', ''); toast('Registro aprovado.'); if (api.mode === 'claude') render(); } catch (err) { toast(writeError(err), true); }
 }
 function openPontoConfig() {
-  const c = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, fuso: 'America/Fortaleza', ...(S.pontoConfig || {}) };
+  const c = { endereco: '', lat: null, lng: null, raioM: 150, ips: [], toleranciaMin: 20, exigirProva: true, usarGps: true, fuso: 'America/Fortaleza', ...(S.pontoConfig || {}) };
   const FUSOS = ['America/Fortaleza', 'America/Sao_Paulo', 'America/Belem', 'America/Recife', 'America/Bahia', 'America/Manaus', 'America/Cuiaba', 'America/Rio_Branco'];
   openSheet('Configurar o controle de horário', `
     <form id="pc-form" autocomplete="off" novalidate>
-      <fieldset><legend>Onde fica o escritório (cerca virtual)</legend>
+      ${api.features.ip ? `<fieldset><legend>Como comprovar a presença</legend>
+        <div class="row" style="margin-bottom:0">
+          <label class="check" for="pc-modo-ip" style="margin:0"><input type="radio" name="pc-modo" id="pc-modo-ip" value="ip" ${c.usarGps === false ? 'checked' : ''}><span>Só pela rede do escritório (IP)<small>o aparelho precisa estar no Wi-Fi do escritório; não pede localização</small></span></label>
+          <label class="check" for="pc-modo-ambos" style="margin:0"><input type="radio" name="pc-modo" id="pc-modo-ambos" value="ambos" ${c.usarGps === false ? '' : 'checked'}><span>Rede do escritório ou localização (GPS)<small>vale qualquer uma das duas provas</small></span></label>
+        </div>
+        <p class="hint">Só por IP: quem registrar pelo 4G/5G (fora do Wi-Fi) fica pendente para você aprovar. Se o provedor trocar o IP do escritório, adicione o novo abaixo.</p>
+      </fieldset>` : ''}
+      <fieldset id="pc-gps-box" ${api.features.ip && c.usarGps === false ? 'hidden' : ''}><legend>Onde fica o escritório (cerca virtual)</legend>
         <div class="field"><label for="pc-end">Endereço <small>(só para referência)</small></label><input type="text" id="pc-end" value="${esc(c.endereco || '')}"></div>
         <div class="row">
           <div class="field"><label for="pc-lat">Latitude</label><input type="text" id="pc-lat" inputmode="decimal" value="${c.lat ?? ''}" placeholder="-2.5000"></div>
@@ -2614,16 +2652,18 @@ function openPontoConfig() {
       <div class="form-actions"><button class="btn" type="button" id="pc-cancel">Cancelar</button><button class="btn btn-primary" type="submit" id="pc-ok">Salvar</button></div>
     </form>`);
   $('#pc-cancel').addEventListener('click', closeSheet);
+  $$('input[name="pc-modo"]').forEach(r => r.addEventListener('change', () => { $('#pc-gps-box').hidden = $('#pc-modo-ip').checked; }));
   $('#pc-here').addEventListener('click', async () => { const st = $('#pc-here-st'); st.textContent = 'Obtendo localização…'; const g = await geoNow(12000); if (g.error) { st.textContent = g.error === 'denied' ? 'Permissão negada. Libere a localização para este site.' : 'Não foi possível obter a localização.'; return; } $('#pc-lat').value = g.lat.toFixed(6); $('#pc-lng').value = g.lng.toFixed(6); st.textContent = `Preenchido (precisão de ${g.precisao} m).`; });
   $('#pc-myip')?.addEventListener('click', async () => { const st = $('#pc-myip-st'); const ip = await api.myIp(); if (!ip) { st.textContent = 'Não foi possível descobrir o IP.'; return; } const ta = $('#pc-ips'), cur = ta.value.split(/\s+/).filter(Boolean); if (!cur.includes(ip)) { cur.push(ip); ta.value = cur.join('\n'); } st.textContent = `IP ${ip} adicionado.`; });
   $('#pc-form').addEventListener('submit', async e => {
     e.preventDefault(); const err = $('#pc-err');
     const lat = $('#pc-lat').value.trim().replace(',', '.'), lng = $('#pc-lng').value.trim().replace(',', '.');
     if ((lat === '') !== (lng === '')) return err.textContent = 'Informe latitude e longitude juntas.';
-    const data = { endereco: $('#pc-end').value.trim(), lat: lat === '' ? null : Number(lat), lng: lng === '' ? null : Number(lng), raioM: Number($('#pc-raio').value) || 150, ips: $('#pc-ips') ? $('#pc-ips').value.split(/[\s,;]+/).filter(Boolean) : [], toleranciaMin: Number($('#pc-tol').value) || 0, exigirProva: $('#pc-prova').checked, fuso: $('#pc-fuso').value, feriados: feriados() };
+    const data = { endereco: $('#pc-end').value.trim(), lat: lat === '' ? null : Number(lat), lng: lng === '' ? null : Number(lng), raioM: Number($('#pc-raio').value) || 150, ips: $('#pc-ips') ? $('#pc-ips').value.split(/[\s,;]+/).filter(Boolean) : [], toleranciaMin: Number($('#pc-tol').value) || 0, exigirProva: $('#pc-prova').checked, usarGps: $('#pc-modo-ip') ? !$('#pc-modo-ip').checked : true, fuso: $('#pc-fuso').value, feriados: feriados() };
     if (data.lat != null && (!Number.isFinite(data.lat) || !Number.isFinite(data.lng))) return err.textContent = 'Latitude/longitude inválidas.';
+    if (!data.usarGps && !data.ips.length) return err.textContent = 'Para comprovar só pela rede, informe ao menos um IP do escritório (botão “Adicionar meu IP atual”, conectado ao Wi-Fi do escritório).';
     $('#pc-ok').disabled = true;
-    try { const r = await api.savePontoConfig(data); S.pontoConfig = { ...S.pontoConfig, ...(r?.config || data), configurado: data.lat != null || data.ips.length > 0 }; toast('Configuração salva.'); closeSheet(); render(); }
+    try { const r = await api.savePontoConfig(data); S.pontoConfig = { ...S.pontoConfig, ...(r?.config || data), configurado: (data.usarGps && data.lat != null) || data.ips.length > 0 }; toast('Configuração salva.'); closeSheet(); render(); }
     catch (e2) { err.textContent = writeError(e2); $('#pc-ok').disabled = false; }
   });
 }
@@ -2704,12 +2744,12 @@ function openHolidays() {
 async function exportPontoCSV(pid) {
   const list = employees().filter(p => !pid || p.id === pid), ym = S.fpt.mes;
   const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const head = ['Pessoa', 'Tipo', 'Dia', 'Semana', 'Entrada', 'Volta do almoço', 'Saída', 'Horas feitas', 'Horas previstas', 'Atraso (min)', 'Situação', 'Provas'];
+  const head = ['Pessoa', 'Tipo', 'Dia', 'Semana', 'Entrada', 'Saída para o almoço', 'Volta do almoço', 'Saída', 'Horas feitas', 'Horas previstas', 'Atraso (min)', 'Situação', 'Provas'];
   const rows = [];
   for (const p of list) for (const d of monthCalc(p, ym).dias) {
     if (d.status === 'folga' && !d.valid.length) continue;
-    const prova = ['entrada', 'volta', 'saida'].filter(t => d.by[t]).map(t => `${PT_TIPOS[t]}: ${proofLabel(d.by[t])}`).join(' · ');
-    rows.push([p.nome, tipoLabel(p), fmtDate(d.date), WD[weekdayOf(d.date)], hhmm(d.by.entrada?.hora), hhmm(d.by.volta?.hora), hhmm(d.by.saida?.hora), fmtMin(d.feito), fmtMin(d.previsto), d.atraso, (STATUS_LABEL[d.status] || d.status) + (d.fer ? ' — ' + feriadoLabel(d.fer) : ''), prova].map(q).join(';'));
+    const prova = ['entrada', 'almoco', 'volta', 'saida'].filter(t => d.by[t]).map(t => `${PT_TIPOS[t]}: ${proofLabel(d.by[t])}`).join(' · ');
+    rows.push([p.nome, tipoLabel(p), fmtDate(d.date), WD[weekdayOf(d.date)], hhmm(d.by.entrada?.hora), hhmm(d.by.almoco?.hora), hhmm(d.by.volta?.hora), hhmm(d.by.saida?.hora), fmtMin(d.feito), fmtMin(d.previsto), d.atraso, (STATUS_LABEL[d.status] || d.status) + (d.fer ? ' — ' + feriadoLabel(d.fer) : ''), prova].map(q).join(';'));
   }
   const csv = '﻿' + head.map(q).join(';') + '\r\n' + rows.join('\r\n');
   try { const ok = await api.exportCSV(`espelho-horario-${ym}${pid ? '-' + (partnerById(pid)?.nome || '').toLowerCase().replace(/\s+/g, '-') : ''}.csv`, csv); if (ok) toast('Espelho exportado.'); }

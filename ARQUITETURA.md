@@ -240,11 +240,13 @@ associado entram no Financeiro pela mesma rotina (`pendingSalaries`/`postSalarie
 *Estagiários (bolsa)* e *Advogados associados (salário)*).
 
 **Jornada.** `jornada = { dias: [1..5], blocos: [[ini, fim], [ini, fim]] }`, com 1 ou 2 turnos.
-Padrões: associado *integral* (08:00–12:00 e 14:00–17:30 → 3 batidas: entrada, volta do almoço e
-saída) e estagiário *manhã* (08:00–12:00 → 2 batidas); há também *tarde* (14:00–17:30) e
-personalizado. Horas do 1º turno contam da entrada até o fim previsto do turno (quando há 2
-turnos) ou até a saída; as do 2º, da volta até a saída. Atraso = entrada (ou volta) além do início
-previsto + tolerância (20 min por padrão; configurável). Falta = dia útil da jornada sem batida;
+Padrões: associado *integral* (08:00–12:00 e 14:00–17:30 → **4 registros**: entrada, saída para o
+almoço (`almoco`), volta do almoço e saída) e estagiário *manhã* (08:00–12:00 → 2 registros); há
+também *tarde* (14:00–17:30) e personalizado. Horas do 1º turno contam da entrada até a saída para
+o almoço (sem ela, até o fim previsto do turno — compatível com registros antigos de 3 batidas) e
+as do 2º, da volta até a saída. No dia de hoje o *previsto* é só a parte do expediente já decorrida
+(`previstoAte`), para o saldo não aparecer negativo no meio do dia. Atraso = entrada (ou volta)
+além do início previsto + tolerância (20 min por padrão; configurável). Falta = dia útil da jornada sem batida;
 *incompleto* = dia com batida faltando. Faltas só contam dentro do período do estágio e a partir
 do cadastro da pessoa.
 
@@ -263,7 +265,10 @@ falta e sem horas previstas; quem registrar tem as horas contadas (entram como e
 **Prova de presença ("cerca virtual + rede do escritório").** Ao bater, o aparelho envia
 latitude/longitude/precisão; o servidor grava o **horário do servidor** no fuso configurado e
 avalia: `rede_ok` (IP de origem na lista de IPs do escritório; aceita `prefixo*`) e `gps_ok`
-(distância ≤ raio + até 50 m de imprecisão). Válida se qualquer um dos dois; senão **não é
+(distância ≤ raio + até 50 m de imprecisão). Com `settings.ponto.usarGps = false` (opção "Só pela
+rede do escritório (IP)" na configuração, v12) o GPS é ignorado: a configuração pública vai sem as
+coordenadas (o aparelho não pede localização), só `rede_ok` valida e quem registra pelo 4G/5G fica
+pendente. Válida se qualquer um dos dois; senão **não é
 recusada** — fica `pendente` para a administração aprovar/recusar, com distância, IP e precisão
 registrados. Sem nada configurado, a batida vale sem prova e a tela avisa. Não se repete a mesma
 batida no dia. "Esqueci de bater" gera um pedido de ajuste (`origem = ajuste`, `pendente`,
@@ -342,6 +347,22 @@ informado ainda não lançado.
 **Valor da condenação em qualquer processo.** O campo `valor_condenacao` vale para todos os
 processos quando julgados (opcional nas parcerias, onde a divisão continua incidindo sobre os
 honorários); em curso, o valor pretendido da ação é opcional nas parcerias.
+
+**Processos vinculados (v13).** `cases.parent_id` aponta para o processo principal (agravo de
+instrumento, embargos à execução, impugnação…). O servidor exige que o principal exista e esteja no
+escopo de quem grava, recusa auto-vínculo e ciclos (`checkParent`) e, ao excluir o principal, solta
+os vinculados (`parent_id = NULL`). Na tela: campo "Vinculado ao processo" no cadastro, botão
+"+ Processo vinculado" na edição (abre o cadastro já com cliente, titularidade, advogado e vínculo
+do principal) e, na tabela, os vinculados aparecem logo abaixo do principal (`↳`, etiqueta
+VINCULADO; o principal mostra "N vinculados"). Os honorários de cada processo são independentes e
+**podem ser zero** (iniciais, finais em % ou valor, sucumbenciais) — a tela só pede confirmação ao
+marcar "recebido" sem nenhum valor.
+
+**Parcelas de honorários iniciais por processo.** `hiStatus(c)` lê as receitas *Honorários
+iniciais* vinculadas ao processo (`case_id`) e resume: pagas/vencidas/a vencer, total e próximo
+vencimento — pill "Iniciais em dia / em atraso / quitados" na tabela de processos e no cadastro. O
+**associado** recebe no bootstrap só essas receitas dos próprios processos (nada mais do
+Financeiro), para acompanhar quem está em atraso; a baixa continua pela administração.
 
 **Honorários sucumbenciais (v11).** O número da decisão — `valor_condenacao`, o **valor total da
 condenação** — normalmente já inclui os honorários de sucumbência, que são **só dos advogados**.
@@ -428,7 +449,7 @@ Quando um processo passa a **Finalizado e recebido**:
 - No site a regra roda no servidor (`settleFinance`, em `routes/cases.js`, dentro da mesma transação); no artifact, no adaptador `api-claude.js`, que só consegue gravar em `finance` quando o usuário é o proprietário.
 
 Esquema versionado: `schema_version` guarda a versão atual e `db.js` aplica migrações numeradas
-ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`; v12, `partners.admissao`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
+ao subir (v2 acrescentou `credits.data_prevista`; v3, a tabela `finance_entries`; v4, `cases.natureza`; v5, fase/situação do processo e vínculo com o financeiro; v6, contratos, tipo/área/salário/bonificação dos parceiros, vínculos do financeiro com contrato/crédito/associado e situação dos créditos; v7, `partner_id` anulável, titularidade e receitas provisionadas/parceladas; v8, `valor_condenacao` e `pct_honorarios` — a coluna `pct_honorarios_iniciais` da v7 é removida; v9, estagiários (curso, instituição, supervisor, estágio, bolsa, jornada), `time_entries` e `settings`; v10, base dos honorários, valores da execução e honorários iniciais; v11, honorários sucumbenciais — `honorarios_sucumbenciais`, `pct_sucumb_parceiro`, `sucumb_recebido`; v12, `partners.admissao`; v13, `cases.parent_id`). Um banco antigo é atualizado sozinho — a v7 recria a tabela `cases` preservando as linhas, por isso faça backup antes de atualizar.
 
 ## 4. API REST
 
