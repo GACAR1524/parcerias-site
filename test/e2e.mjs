@@ -112,11 +112,23 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('João Pereira') && tr.textContent.includes('no financeiro')), null, { timeout: 5000 });
   const rowJoao = await page.textContent('tr[data-id]:has-text("João Pereira")');
   check('tabela mostra recebido e lançado no financeiro', rowJoao.includes('no financeiro') && !rowJoao.includes('lançar'));
-  // perdido
+  // administrativo indeferido → judicializar (ação judicial vinculada ao requerimento)
   await page.click('tr[data-id]:has-text("Maria Adm")');
-  await page.waitForSelector('#case-form'); await page.check('#c-res-per'); await page.click('#c-save');
-  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Maria Adm') && tr.textContent.includes('Perdido')), null, { timeout: 5000 });
-  check('processo perdido aparece com a situação Perdido', true);
+  await page.waitForSelector('#case-form');
+  check('requerimento administrativo: valores opcionais, situações "Concedido e recebido" / "Indeferido"', await page.isVisible('#c-adm-hint') && /Indeferido/.test(await page.textContent('#c-res-per-txt')) && /Concedido/.test(await page.textContent('#c-res-rec-txt')) && /Em análise/.test(await page.textContent('#c-fase-curso-txt')));
+  await page.check('#c-res-per'); await page.waitForTimeout(100);
+  check('ao marcar Indeferido, "Judicializar ao salvar" vem marcado', await page.isVisible('#c-jud-box') && await page.isChecked('#c-jud'));
+  await page.click('#c-save');
+  await page.waitForSelector('#case-form .note', { timeout: 5000 });
+  check('salvar abre o cadastro da ação judicial já vinculada ao requerimento, com cliente e advogado', /Judicializar/.test(await page.textContent('#case-form .note')) && (await page.inputValue('#c-cliente')) === 'Maria Adm' && await page.isChecked('#c-nat-jud') && (await page.$eval('#c-parent', s => s.selectedOptions[0].textContent)).includes('12345.678901/2026-00') && await page.isChecked('#c-base-causa'));
+  await page.fill('#c-num', '08066666620268170001'); await page.fill('#c-tipo', 'Ação previdenciária'); await page.fill('#c-vacao', '30000'); await page.fill('#c-phon', '0'); await page.press('#c-phon', 'Tab');
+  check('valor da causa informado na ação judicial, honorários podem ficar zerados', (await page.inputValue('#c-hon')) === '' || (await page.inputValue('#c-hon')) === '0,00');
+  await page.click('#c-save');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Maria Adm') && tr.textContent.includes('Indeferido')) && [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Ação previdenciária') && tr.textContent.includes('VINCULADO')), null, { timeout: 5000 });
+  check('requerimento aparece como Indeferido e a ação judicial como VINCULADO abaixo dele', (await page.textContent('tr[data-id]:has-text("Maria Adm"):not(.linked)')).includes('1 vinculado'));
+  await page.click('tr[data-id]:has-text("12345.678901/2026-00")'); await page.waitForSelector('#case-form');
+  check('ao reabrir o requerimento indeferido, mostra "Já judicializado" em vez da caixa', /Já judicializado/.test(await page.textContent('#c-jud-box')) && !(await page.$('#c-jud')));
+  await page.click('#c-cancel');
 
   // créditos
   await page.click('[data-tab="credits"]');
@@ -416,7 +428,7 @@ try {
   await page.check('#c-res-rec'); await page.waitForTimeout(150);
   check('parceiro não vê a opção de lançar, e sim o aviso ao escritório', !(await page.$('#c-lancar')) && (await page.textContent('#fin-box')).includes('escritório'));
   await page.click('#c-save');
-  await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 5, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('tr[data-id]').length === 6, null, { timeout: 5000 });
   await page.click('#btn-logout'); await page.waitForSelector('#login-form');
   await page.fill('#lg-user', 'admin'); await page.fill('#lg-pass', 'senha-forte-123'); await page.click('#lg-btn'); await page.waitForSelector('#tabs');
   await page.click('[data-tab="overview"]'); await page.waitForSelector('.hero');

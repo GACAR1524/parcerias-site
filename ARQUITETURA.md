@@ -358,6 +358,14 @@ VINCULADO; o principal mostra "N vinculados"). Os honorários de cada processo s
 **podem ser zero** (iniciais, finais em % ou valor, sucumbenciais) — a tela só pede confirmação ao
 marcar "recebido" sem nenhum valor.
 
+**Requerimento administrativo → judicializar.** No administrativo todos os valores são opcionais
+e a tela troca os rótulos (Em análise / Decidido; Concedido e recebido / Indeferido), não pergunta
+condenação nem sucumbência e sugere a base *valor combinado*. Ao marcar **Indeferido**, a caixa
+"Judicializar ao salvar" (marcada por padrão) abre, depois de salvar, o cadastro da ação judicial
+já vinculada ao requerimento (`parent_id`), com cliente, titularidade e advogado herdados e base
+*valor da causa* para informar o valor do cálculo; um requerimento já judicializado mostra a ação
+em vez da caixa.
+
 **Parcelas de honorários iniciais por processo.** `hiStatus(c)` lê as receitas *Honorários
 iniciais* vinculadas ao processo (`case_id`) e resume: pagas/vencidas/a vencer, total e próximo
 vencimento — pill "Iniciais em dia / em atraso / quitados" na tabela de processos e no cadastro. O

@@ -522,7 +522,7 @@ function roundedTop(x, y, w, h, r) {
   if (h <= 0) return ''; r = Math.min(r, h, w / 2);
   return `M${x},${y + h} V${y + r} Q${x},${y} ${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h} Z`;
 }
-function statusPill(c) { const r = resultadoOf(c); return r === 'recebido' ? '<span class="pill ok">Recebido</span>' : r === 'perdido' ? '<span class="pill off">Perdido</span>' : '<span class="pill wait">Em andamento</span>'; }
+function statusPill(c) { const r = resultadoOf(c), adm = natOf(c) === 'administrativo'; return r === 'recebido' ? `<span class="pill ok">${adm ? 'Concedido' : 'Recebido'}</span>` : r === 'perdido' ? `<span class="pill off">${adm ? 'Indeferido' : 'Perdido'}</span>` : `<span class="pill wait">${adm ? 'Em análise' : 'Em andamento'}</span>`; }
 function pontoBanner() {
   const n = pontoPendentes().length; if (!n) return '';
   const aj = pontoPendentes().filter(e => e.origem === 'ajuste').length, fora = n - aj;
@@ -1599,12 +1599,12 @@ function writeError(err) {
 /* ---------- processo ---------- */
 function openCaseForm(c, prefill) {
   const admin = isAdmin(), isNew = !c, pf = prefill || {};
-  const base = pf.parent || null; // novo processo vinculado: herda cliente, titularidade e advogado do principal
+  const base = pf.parent || null, jud = !!pf.judicializar; // novo processo vinculado: herda cliente, titularidade e advogado do principal; judicializar = ação judicial após indeferimento administrativo
   const office0 = admin && (c ? isOffice(c) : base ? isOffice(base) : S.f.partner === '_escritorio');
   const pid = admin ? (office0 ? '' : (c?.parceiroId || base?.parceiroId || (S.f.partner !== '_escritorio' ? S.f.partner : '') || '')) : myPartnerId();
   const p = partnerById(pid);
   const d = c || { parceiroId: pid, titularidade: office0 ? 'escritorio' : 'parceria', natureza: 'judicial', fase: 'em_curso', resultado: 'em_andamento', dataProtocolo: todayISO(), pctParceiro: office0 ? 0 : (p ? num(p.pctParceiroPadrao) : 50), pctNosso: office0 ? 100 : (p ? num(p.pctNossoPadrao) : 50), temCorretor: false, corretorPago: false, fluxoRecebimento: 'escritorio', parentId: base?.id || null, cliente: base?.cliente || '' };
-  const res0 = resultadoOf(d), fase0 = faseOf(d), nat0 = natOf(d), base0 = c ? baseOf(c) : (office0 ? 'valor_causa' : 'fixo'), concl0 = fase0 === 'julgado' || res0 === 'recebido';
+  const res0 = resultadoOf(d), fase0 = faseOf(d), nat0 = natOf(d), adm0 = nat0 === 'administrativo', base0 = c ? baseOf(c) : (adm0 ? 'fixo' : (office0 || jud) ? 'valor_causa' : 'fixo'), concl0 = fase0 === 'julgado' || res0 === 'recebido';
   const psp0 = c ? pctSucumbOf(c) : (office0 ? 0 : (isAssoc(p) ? num(d.pctParceiro) : 50));
   const sucRec0 = c && res0 === 'recebido' ? (has(c.sucumbRecebido) ? num(c.sucumbRecebido) : Math.min(num(c.honorariosSucumbenciais), num(c.valorRecebido))) : 0;
   const contrRec0 = c && res0 === 'recebido' ? Math.max(0, num(c.valorRecebido == null ? num(c.honorariosPretendidos) + num(c.honorariosSucumbenciais) : c.valorRecebido) - sucRec0) : 0;
@@ -1612,7 +1612,7 @@ function openCaseForm(c, prefill) {
   const ps = S.partners.filter(x => !isIntern(x) && (x.ativo !== false || x.id === pid)).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   openSheet(isNew ? 'Novo processo' : 'Editar processo', `
     <form id="case-form" autocomplete="off" novalidate>
-      ${base ? `<div class="note" style="margin-bottom:12px">Novo processo <b>vinculado</b> a ${esc(base.tipoAcao || 'processo')} ${esc(numFmt(base))} (${esc(base.cliente)}). Cliente, titularidade e advogado já vêm do principal; os honorários são deste processo — pode deixar zerado se o contrato for só do principal.</div>` : ''}
+      ${base ? `<div class="note" style="margin-bottom:12px">${jud ? `<b>Judicializar:</b> ação judicial decorrente do indeferimento do requerimento ${esc(numFmt(base))} (${esc(base.cliente)}). Informe o número do processo judicial e o <b>valor da causa</b> conforme o cálculo; o requerimento fica vinculado como origem.` : `Novo processo <b>vinculado</b> a ${esc(base.tipoAcao || 'processo')} ${esc(numFmt(base))} (${esc(base.cliente)}). Cliente, titularidade e advogado já vêm do principal; os honorários são deste processo — pode deixar zerado se o contrato for só do principal.`}</div>` : ''}
       ${admin ? `<div class="row" style="margin-bottom:12px">
         <label class="check" for="c-tit-par" style="margin:0"><input type="radio" name="c-tit" id="c-tit-par" value="parceria" ${office0 ? '' : 'checked'}><span>Com advogado parceiro ou associado<small>honorários divididos conforme o cadastro</small></span></label>
         <label class="check" for="c-tit-esc" style="margin:0"><input type="radio" name="c-tit" id="c-tit-esc" value="escritorio" ${office0 ? 'checked' : ''}><span>Somente do escritório<small>sem divisão; nossos honorários finais em % do valor da ação</small></span></label>
@@ -1623,8 +1623,8 @@ function openCaseForm(c, prefill) {
         <label class="check" for="c-nat-adm" style="margin:0"><input type="radio" name="c-nat" id="c-nat-adm" value="administrativo" ${nat0 === 'administrativo' ? 'checked' : ''}><span>Administrativo<small>protocolo, PA, requerimento…</small></span></label>
       </div>
       <div class="row" style="margin-bottom:12px">
-        <label class="check" for="c-fase-curso" style="margin:0"><input type="radio" name="c-fase" id="c-fase-curso" value="em_curso" ${fase0 === 'em_curso' ? 'checked' : ''}><span>Em curso<small>ainda sem julgamento — informe o valor pretendido</small></span></label>
-        <label class="check" for="c-fase-julg" style="margin:0"><input type="radio" name="c-fase" id="c-fase-julg" value="julgado" ${fase0 === 'julgado' ? 'checked' : ''}><span>Julgado<small>já há decisão — informe a condenação total e os sucumbenciais</small></span></label>
+        <label class="check" for="c-fase-curso" style="margin:0"><input type="radio" name="c-fase" id="c-fase-curso" value="em_curso" ${fase0 === 'em_curso' ? 'checked' : ''}><span id="c-fase-curso-txt">${adm0 ? 'Em análise<small>aguardando resposta do órgão</small>' : 'Em curso<small>ainda sem julgamento — informe o valor pretendido</small>'}</span></label>
+        <label class="check" for="c-fase-julg" style="margin:0"><input type="radio" name="c-fase" id="c-fase-julg" value="julgado" ${fase0 === 'julgado' ? 'checked' : ''}><span id="c-fase-julg-txt">${adm0 ? 'Decidido<small>já houve resposta (deferido ou indeferido)</small>' : 'Julgado<small>já há decisão — informe a condenação total e os sucumbenciais</small>'}</span></label>
       </div>
       <div class="row">
         <div class="field"><label for="c-num" id="c-num-label">${nat0 === 'judicial' ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo'}</label><input type="text" id="c-num" inputmode="${nat0 === 'judicial' ? 'numeric' : 'text'}" placeholder="${nat0 === 'judicial' ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'}" value="${esc(c?.numeroProcesso || '')}" required></div>
@@ -1634,6 +1634,7 @@ function openCaseForm(c, prefill) {
       <div class="field"><label for="c-tipo" id="c-tipo-label">${nat0 === 'judicial' ? 'Tipo de ação judicial' : 'Tipo de procedimento administrativo'}</label><input type="text" id="c-tipo" list="tipos-list" value="${esc(c?.tipoAcao || '')}" placeholder="Escolha ou digite" required><datalist id="tipos-list">${Array.from(new Set([...TIPOS, ...S.cases.map(x => x.tipoAcao).filter(Boolean)])).map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
       <div class="field"><label for="c-parent">Vinculado ao processo <small>(opcional — ex.: agravo de instrumento ou embargos ligados a uma execução)</small></label><select id="c-parent"><option value="">Nenhum — este é o processo principal</option>${S.cases.filter(x => x.id !== c?.id && rootOf(x).id !== c?.id).sort((a, b) => (a.cliente || '').localeCompare(b.cliente || '') || (b.dataProtocolo || '').localeCompare(a.dataProtocolo || '')).map(x => `<option value="${esc(x.id)}" ${x.id === (d.parentId || '') ? 'selected' : ''}>${esc(x.cliente)} — ${esc(numFmt(x))} · ${esc(x.tipoAcao || '')}</option>`).join('')}</select>${c && childrenOf(c).length ? `<p class="hint" style="margin:4px 0 0">Este processo tem ${childrenOf(c).length} vinculado${childrenOf(c).length === 1 ? '' : 's'}: ${esc(childrenOf(c).map(k => `${k.tipoAcao || 'processo'} ${numFmt(k)}`).join('; '))}.</p>` : ''}</div>
       <fieldset id="c-values"><legend>Honorários</legend>
+        <p class="hint" id="c-adm-hint" ${adm0 ? '' : 'hidden'} style="margin:0 0 10px">Requerimento administrativo: <b>todos os valores são opcionais</b> (podem ficar zerados). Se for indeferido, marque “Indeferido” e judicialize — a ação judicial é cadastrada vinculada a este requerimento, com o valor da causa do cálculo. Se for concedido, marque “Concedido e recebido” e informe o que entrou.</p>
         <div class="subhead">Entrada</div>
         <div class="row">
           <div class="field"><label for="c-hini">Honorários iniciais pagos pelo cliente <small>(R$)</small></label><input type="text" class="money" id="c-hini" inputmode="decimal" value="${c && num(c.honorariosIniciais) > 0 ? moneyInput(c.honorariosIniciais) : ''}" placeholder="0,00"></div>
@@ -1686,15 +1687,15 @@ function openCaseForm(c, prefill) {
       <fieldset><legend>Situação do processo</legend>
         <div class="row" style="margin-bottom:12px">
           <label class="check" for="c-res-and" style="margin:0"><input type="radio" name="c-res" id="c-res-and" value="em_andamento" ${res0 === 'em_andamento' ? 'checked' : ''}><span>Em andamento<small>aguardando desfecho</small></span></label>
-          <label class="check" for="c-res-rec" style="margin:0"><input type="radio" name="c-res" id="c-res-rec" value="recebido" ${res0 === 'recebido' ? 'checked' : ''}><span>Finalizado e recebido<small>o valor entrou</small></span></label>
-          <label class="check" for="c-res-per" style="margin:0"><input type="radio" name="c-res" id="c-res-per" value="perdido" ${res0 === 'perdido' ? 'checked' : ''}><span>Perdido<small>nada a receber</small></span></label>
+          <label class="check" for="c-res-rec" style="margin:0"><input type="radio" name="c-res" id="c-res-rec" value="recebido" ${res0 === 'recebido' ? 'checked' : ''}><span id="c-res-rec-txt">${adm0 ? 'Concedido e recebido<small>o pedido foi deferido e o valor entrou</small>' : 'Finalizado e recebido<small>o valor entrou</small>'}</span></label>
+          <label class="check" for="c-res-per" style="margin:0"><input type="radio" name="c-res" id="c-res-per" value="perdido" ${res0 === 'perdido' ? 'checked' : ''}><span id="c-res-per-txt">${adm0 ? 'Indeferido<small>negado — dá para judicializar</small>' : 'Perdido<small>nada a receber</small>'}</span></label>
         </div>
         <div id="rec-fields" ${res0 === 'recebido' ? '' : 'hidden'}>
           <div id="c-rec-cond"></div>
           <div class="subhead">Quanto recebemos</div>
           <div class="row">
             <div class="field"><label for="c-vrecc" id="c-vrecc-label">Honorários contratuais recebidos <small>(R$)</small></label><input type="text" class="money" id="c-vrecc" inputmode="decimal" value="${c && res0 === 'recebido' ? moneyInput(contrRec0) : ''}" placeholder="0,00"></div>
-            <div class="field"><label for="c-vrecs">Honorários sucumbenciais recebidos <small>(R$)</small></label><input type="text" class="money" id="c-vrecs" inputmode="decimal" value="${c && res0 === 'recebido' && sucRec0 > 0 ? moneyInput(sucRec0) : ''}" placeholder="0,00"></div>
+            <div class="field" id="c-vrecs-field" ${adm0 ? 'hidden' : ''}><label for="c-vrecs">Honorários sucumbenciais recebidos <small>(R$)</small></label><input type="text" class="money" id="c-vrecs" inputmode="decimal" value="${c && res0 === 'recebido' && sucRec0 > 0 ? moneyInput(sucRec0) : ''}" placeholder="0,00"></div>
             <div class="field"><label for="c-drec">Data do recebimento</label><input type="date" id="c-drec" value="${esc((c?.dataRecebimento || '').slice(0, 10))}"></div>
           </div>
           <p class="hint" id="c-rec-hint" style="margin:-4px 0 10px"></p>
@@ -1702,8 +1703,9 @@ function openCaseForm(c, prefill) {
           <div id="fin-box"></div>
         </div>
         <div id="lost-fields" ${res0 === 'perdido' ? '' : 'hidden'}>
-          <div class="row"><div class="field"><label for="c-denc">Data do encerramento</label><input type="date" id="c-denc" value="${esc((c?.dataEncerramento || '').slice(0, 10))}"></div></div>
-          <p class="hint">O processo sai do que há a receber; o custo do lead continua contabilizado.</p>
+          <div class="row"><div class="field"><label for="c-denc" id="c-denc-label">${adm0 ? 'Data do indeferimento' : 'Data do encerramento'}</label><input type="date" id="c-denc" value="${esc((c?.dataEncerramento || '').slice(0, 10))}"></div></div>
+          <div id="c-jud-box" ${adm0 ? '' : 'hidden'}>${c && childrenOf(c).some(k => natOf(k) === 'judicial') ? `<p class="hint">Já judicializado: ${esc(childrenOf(c).filter(k => natOf(k) === 'judicial').map(k => `${k.tipoAcao || 'ação judicial'} ${numFmt(k)}`).join('; '))}.</p>` : `<label class="check" for="c-jud"><input type="checkbox" id="c-jud" ${res0 === 'perdido' ? '' : 'checked'}><span>Judicializar ao salvar<small>abre o cadastro da ação judicial já vinculada a este requerimento, com cliente e advogado preenchidos — você informa o número e o valor da causa</small></span></label>`}</div>
+          <p class="hint">${adm0 ? 'O requerimento sai do que há a receber; o custo do lead continua contabilizado.' : 'O processo sai do que há a receber; o custo do lead continua contabilizado.'}</p>
         </div>
       </fieldset>
       <fieldset><legend>Corretor</legend>
@@ -1744,7 +1746,8 @@ function openCaseForm(c, prefill) {
   const placeCond = () => {
     const blk = g('c-cond-block'), rec = curRes() === 'recebido', target = rec ? g('c-rec-cond') : g('c-cond-home');
     if (blk.parentNode !== target) target.appendChild(blk);
-    blk.hidden = !(rec || curFase() === 'julgado');
+    blk.hidden = curNat() === 'administrativo' || !(rec || curFase() === 'julgado');
+    g('c-vrecc-label').innerHTML = curNat() === 'administrativo' ? 'Honorários recebidos <small>(R$)</small>' : 'Honorários contratuais recebidos <small>(R$)</small>';
     g('c-cond-head').textContent = rec ? 'Antes: qual foi a condenação e quanto dela é honorário sucumbencial?' : 'Decisão — condenação e honorários sucumbenciais';
   };
   /* Valores recebidos acompanham o cálculo (contratuais = honorários; sucumbenciais = os fixados) até o usuário digitar neles. */
@@ -1812,12 +1815,21 @@ function openCaseForm(c, prefill) {
   }
   refreshHon();
   g('c-num').addEventListener('blur', () => { if (curNat() === 'judicial') g('c-num').value = cnj(g('c-num').value); });
+  const curAdm = () => curNat() === 'administrativo';
   f.querySelectorAll('input[name="c-nat"]').forEach(r => r.addEventListener('change', () => {
-    const jud = curNat() === 'judicial';
+    const jud = curNat() === 'judicial', adm = !jud;
     g('c-num-label').innerHTML = jud ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo';
     g('c-tipo-label').textContent = jud ? 'Tipo de ação judicial' : 'Tipo de procedimento administrativo';
     g('c-num').placeholder = jud ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'; g('c-num').inputMode = jud ? 'numeric' : 'text';
     if (jud) g('c-num').value = cnj(g('c-num').value);
+    g('c-fase-curso-txt').innerHTML = adm ? 'Em análise<small>aguardando resposta do órgão</small>' : 'Em curso<small>ainda sem julgamento — informe o valor pretendido</small>';
+    g('c-fase-julg-txt').innerHTML = adm ? 'Decidido<small>já houve resposta (deferido ou indeferido)</small>' : 'Julgado<small>já há decisão — informe a condenação total e os sucumbenciais</small>';
+    g('c-res-rec-txt').innerHTML = adm ? 'Concedido e recebido<small>o pedido foi deferido e o valor entrou</small>' : 'Finalizado e recebido<small>o valor entrou</small>';
+    g('c-res-per-txt').innerHTML = adm ? 'Indeferido<small>negado — dá para judicializar</small>' : 'Perdido<small>nada a receber</small>';
+    g('c-denc-label').textContent = adm ? 'Data do indeferimento' : 'Data do encerramento';
+    g('c-adm-hint').hidden = !adm; g('c-jud-box').hidden = !adm; g('c-vrecs-field').hidden = adm;
+    if (adm && isNew && !f.dataset.baseTouched) { g('c-base-fixo').checked = true; if (!f.dataset.honManual) g('c-hon').value = ''; }
+    refreshHon(); summary();
   }));
   const focusCond = () => setTimeout(() => (curBase() === 'reducao_debito' ? g('c-vrecon') : g('c-vcond')).focus(), 0);
   f.querySelectorAll('input[name="c-fase"]').forEach(r => r.addEventListener('change', () => { refreshHon(); if (curFase() === 'julgado' && curRes() !== 'recebido') focusCond(); summary(); }));
@@ -1849,7 +1861,7 @@ function openCaseForm(c, prefill) {
   });
   f.addEventListener('input', () => summary());
   function collect() {
-    const res = curRes(), off = curTit() === 'escritorio', concl = curFase() === 'julgado' || res === 'recebido';
+    const res = curRes(), off = curTit() === 'escritorio', concl = (curFase() === 'julgado' || res === 'recebido') && curNat() !== 'administrativo'; // administrativo: sem condenação nem sucumbência
     return {
       parceiroId: off ? null : (admin ? g('c-partner').value : myPartnerId()),
       titularidade: off ? 'escritorio' : 'parceria',
@@ -1868,7 +1880,7 @@ function openCaseForm(c, prefill) {
       numeroProcesso: curNat() === 'judicial' ? cnj(g('c-num').value) : g('c-num').value.trim(), cliente: g('c-cliente').value.trim(), tipoAcao: g('c-tipo').value.trim(), dataProtocolo: g('c-data').value,
       honorariosPretendidos: parseMoney(g('c-hon').value), custoLead: parseMoney(g('c-lead').value),
       pctParceiro: off ? 0 : num(g('c-pp').value), pctNosso: off ? 100 : num(g('c-pn').value),
-      recebido: res === 'recebido', valorRecebido: res === 'recebido' ? round2(parseMoney(g('c-vrecc').value) + parseMoney(g('c-vrecs').value)) : null, sucumbRecebido: res === 'recebido' ? parseMoney(g('c-vrecs').value) : 0, dataRecebimento: res === 'recebido' ? g('c-drec').value : null,
+      recebido: res === 'recebido', valorRecebido: res === 'recebido' ? round2(parseMoney(g('c-vrecc').value) + (concl ? parseMoney(g('c-vrecs').value) : 0)) : null, sucumbRecebido: res === 'recebido' && concl ? parseMoney(g('c-vrecs').value) : 0, dataRecebimento: res === 'recebido' ? g('c-drec').value : null,
       fluxoRecebimento: res === 'recebido' && !off ? g('c-fluxo').value : 'escritorio', dataEncerramento: res === 'perdido' ? g('c-denc').value : null,
       temCorretor: g('c-cor').checked, nomeCorretor: g('c-cor').checked ? g('c-corn').value.trim() : '', valorCorretor: g('c-cor').checked ? parseMoney(g('c-corv').value) : 0, corretorPago: g('c-cor').checked ? g('c-corp').checked : false,
       observacoes: g('c-obs').value.trim()
@@ -1925,11 +1937,13 @@ function openCaseForm(c, prefill) {
     err.textContent = ''; g('c-save').disabled = true;
     const opts = { lancarFinanceiro: data.resultado === 'recebido' && wantsPost(), lancamentos: data.resultado === 'recebido' ? financeEntriesFor({ ...data, id: c?.id }) : [], statusAtual: finStatus };
     const lancarHI = isNew && admin && data.honorariosIniciais > 0 && !!g('c-hini-fin')?.checked;
+    const judicializar = data.natureza === 'administrativo' && data.resultado === 'perdido' && !!g('c-jud')?.checked;
     try {
       let created = null;
       if (isNew) { created = await api.createCase(data, opts); toast(opts.lancarFinanceiro ? 'Processo cadastrado e lançado no Financeiro.' : 'Processo cadastrado.'); }
       else { await api.updateCase(c.id, data, opts); toast(opts.lancarFinanceiro ? 'Salvo e lançado no Financeiro.' : data.resultado === 'recebido' && !admin ? 'Recebimento informado ao escritório.' : 'Alterações salvas.'); }
       closeSheet();
+      if (judicializar) { const salvo = { ...(c || {}), ...data, id: created?.id || c?.id }; openCaseForm(null, { parent: salvo, judicializar: true }); return; }
       if (lancarHI) openFinanceForm(null, 'receita', { categoria: 'Honorários iniciais', valor: data.honorariosIniciais, descricao: `Honorários iniciais — ${data.cliente} — processo ${data.numeroProcesso}`, caseId: created?.id || null });
     } catch (e2) { err.textContent = writeError(e2); g('c-save').disabled = false; }
   });
