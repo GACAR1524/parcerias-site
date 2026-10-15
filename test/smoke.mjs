@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import ExcelJS from 'exceljs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'parcerias-'));
 const PORT = 3999;
@@ -499,6 +500,44 @@ try {
     const res2 = await fetch(`http://localhost:${PORT}/api/backup`, { headers: { Cookie: jars.p2 } });
     check('parceiro não baixa backup', res2.status === 403, res2.status);
   }
+  r = await call('a', 'GET', '/health');
+  // ---- contabilidade: planilhas do mês geradas a partir do Financeiro e leitura das planilhas enviadas ----
+  const rawCall = async (who, p) => fetch(`http://localhost:${PORT}/api${p}`, { headers: { 'X-Requested-With': 'fetch', Cookie: jars[who] } });
+  r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800777-77.2026.8.10.0001', cliente: 'Cliente Alvará', cpfCnpj: '12345678909', tipoAcao: 'Ação indenizatória', dataProtocolo: '2026-03-01', valorAcao: 5000, pctHonorarios: 40, fase: 'julgado', valorCondenacao: 7000, honorariosSucumbenciais: 0, resultado: 'recebido', valorRecebido: 2800, dataRecebimento: '2027-02-10', lancarFinanceiro: true });
+  check('processo guarda o CPF do cliente formatado', r.status === 201 && r.data.case.cpfCnpj === '123.456.789-09', r);
+  const cidAlv = r.data.id;
+  r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800778-78.2026.8.10.0001', cliente: 'X', cpfCnpj: '123', tipoAcao: 'A', dataProtocolo: '2026-03-01' });
+  check('CPF/CNPJ com tamanho errado é recusado', r.status === 400, r);
+  await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', descricao: 'Entrada — Fulano Novo (987.654.321-00)', valor: 1500, data: '2027-02-05' });
+  await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', descricao: 'Entrada — Cliente Alvará', valor: 600, data: '2027-02-20', caseId: cidAlv });
+  await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Contratos com empresas', descricao: 'mensalidade', valor: 2500, data: '2027-02-10' });
+  await call('a', 'POST', '/finance', { tipo: 'receita', categoria: 'Honorários iniciais', descricao: 'futura', valor: 100, data: '2027-02-25', status: 'provisionado' });
+  r = await call('a', 'GET', '/contabilidade/resumo?mes=2027-02');
+  check('resumo do mês separa recebimentos simples (só realizados, só honorários) e alvarás com bruto/repassado/a declarar', r.status === 200 && r.data.recebimentos.length === 2 && r.data.alvaras.length === 1 && r.data.alvaras[0].processo === '0800777-77.2026.8.10.0001' && r.data.alvaras[0].bruto === 7000 && r.data.alvaras[0].repassado === 4200 && r.data.alvaras[0].declarar === 2800 && r.data.alvaras[0].cpf === '123.456.789-09' && r.data.recebimentos.some(x => x.cliente === 'Cliente Alvará' && x.cpf === '123.456.789-09' && x.valor === 600) && r.data.recebimentos.some(x => x.cpf === '987.654.321-00' && x.valor === 1500) && r.data.totais.declarar === 2800, r.data);
+  let resp = await rawCall('a', '/contabilidade/planilhas?mes=2027-02&arquivo=recebimentos');
+  let wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await resp.arrayBuffer()));
+  let ws = wb.worksheets[0];
+  check('planilha de recebimentos no padrão do contador (cabeçalho, 2 linhas, total com fórmula, moeda, nome do arquivo)', resp.status === 200 && /Recebimentos_Honorarios_Mes_02_2027\.xlsx/.test(resp.headers.get('content-disposition')) && ws.getRow(1).getCell(1).value === 'NOME DO CLIENTE' && ws.getRow(1).getCell(4).value === 'TIPO DE COBRANÇA' && ws.getRow(4).getCell(1).value === 'TOTAL' && String(ws.getRow(4).getCell(3).value.formula) === 'SUM(C2:C3)' && ws.getRow(2).getCell(3).numFmt === 'R$ #,##0.00' && ws.getRow(1).getCell(1).fill.fgColor.argb === 'FF1F4E78' && ws.views[0].ySplit === 1, { h: ws.getRow(1).values, r4: ws.getRow(4).values });
+  resp = await rawCall('a', '/contabilidade/planilhas?mes=2027-02&arquivo=alvaras');
+  wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await resp.arrayBuffer())); ws = wb.worksheets[0];
+  check('planilha de alvarás: processo, cliente, CPF, bruto 7.000, repassado 4.200, a declarar 2.800 e totais', resp.status === 200 && ws.getRow(2).getCell(1).value === '0800777-77.2026.8.10.0001' && ws.getRow(2).getCell(3).value === '123.456.789-09' && ws.getRow(2).getCell(4).value === 7000 && ws.getRow(2).getCell(5).value === 4200 && ws.getRow(2).getCell(6).value === 2800 && ws.getRow(3).getCell(1).value === 'TOTAL', { r2: ws.getRow(2).values });
+  resp = await rawCall('a', '/contabilidade/planilhas?mes=2026-01&arquivo=alvaras');
+  wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await resp.arrayBuffer())); ws = wb.worksheets[0];
+  check('mês sem alvará registra expressamente', /Não houve recebimento de alvará/.test(String(ws.getRow(2).getCell(1).value)));
+  r = await call('p', 'GET', '/contabilidade/resumo?mes=2027-02');
+  check('contabilidade é só da administração', r.status === 403, r);
+  // leitura de planilhas enviadas (mesmo padrão das que o escritório manda ao contador)
+  const mk = async (sheetName, rows) => { const w = new ExcelJS.Workbook(); const x = w.addWorksheet(sheetName); rows.forEach(rw => x.addRow(rw)); return Buffer.from(await w.xlsx.writeBuffer()).toString('base64'); };
+  let b64 = await mk('Recebimentos', [['NOME DO CLIENTE', 'CPF / CNPJ', 'VALOR RECEBIDO (R$)', 'TIPO DE COBRANÇA'], ['ALEX TESTE', '253.059.318-35', 1000, 'Honorário Inicial'], ['EMPRESA TESTE', '45.126.288/0001-83', 'R$ 2.400,00', 'Honorário Final'], ['TOTAL', '', { formula: 'SUM(C2:C3)', result: 3400 }, ''], [], ['OBSERVAÇÃO'], ['Planilha referente aos recebimentos de honorários iniciais do mês 10/2026.']]);
+  r = await call('a', 'POST', '/contabilidade/ler-planilha', { nome: 'Recebimentos_Honorarios_Mes_10_2026.xlsx', base64: b64 });
+  check('lê a planilha de recebimentos: 2 linhas (pula TOTAL/OBSERVAÇÃO), valor em texto "R$ 2.400,00" entendido, mês do nome do arquivo', r.status === 200 && r.data.tipo === 'recebimentos' && r.data.mes === '2026-10' && r.data.linhas.length === 2 && r.data.linhas[1].valor === 2400 && r.data.linhas[1].tipo === 'Honorário Final' && r.data.linhas[0].cpf === '253.059.318-35', r.data);
+  b64 = await mk('Alvarás Judiciais', [['Nº DO PROCESSO JUDICIAL', 'NOME DO CLIENTE', 'CPF / CNPJ', 'VALOR BRUTO (R$)', 'VALOR REPASSADO (R$)', 'VALOR A DECLARAR (R$)', 'OBSERVAÇÃO / VARA'], ['08007777720268100001', 'CLIENTE ALVARÁ', '123.456.789-09', 7000, 4200, 2800, 'Acordo'], ['0800510-89.2026.8.10.0009', 'OUTRO', '054.430.683-83', 3356.19, 2013.71, 1300, '4º JEC'], ['TOTAL', '', '', 7000, 4200, 2800, '']]);
+  r = await call('a', 'POST', '/contabilidade/ler-planilha', { nome: 'Alvaras_Judiciais_Mes_10_2026.xlsx', base64: b64 });
+  check('lê a planilha de alvarás: número com 20 dígitos vira CNJ, confere bruto − repassado = a declarar e marca a divergência', r.status === 200 && r.data.tipo === 'alvaras' && r.data.linhas.length === 2 && r.data.linhas[0].processo === '0800777-77.2026.8.10.0001' && r.data.linhas[0].confere === true && r.data.linhas[1].confere === false && r.data.linhas[1].declarar === 1300, r.data);
+  r = await call('a', 'POST', '/contabilidade/ler-planilha', { nome: 'x.xlsx', base64: Buffer.from('isto não é um xlsx').toString('base64') });
+  check('arquivo que não é xlsx é recusado com mensagem clara', r.status === 400 && /xlsx/.test(r.data.error), r);
+  await call('a', 'DELETE', `/cases/${cidAlv}`);
+
   r = await call('a', 'GET', '/health');
   check('health ok', r.status === 200 && r.data.ok, r);
 } finally {

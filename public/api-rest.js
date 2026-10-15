@@ -94,7 +94,7 @@
 
   window.ParceriasAPI = {
     mode: 'rest',
-    features: { export: true, changePassword: true, ip: true, serverClock: true, backup: true, myFinance: true },
+    features: { export: true, changePassword: true, ip: true, serverClock: true, backup: true, myFinance: true, contabilidade: true },
 
     async init() {
       try {
@@ -155,6 +155,10 @@
     async myIp() { try { return (await call('GET', '/ponto/meu-ip')).ip; } catch { return null; } },
     async updateContract(id, d) { await call('PUT', '/contracts/' + encodeURIComponent(id), d); await reload(); },
     async deleteContract(id) { await call('DELETE', '/contracts/' + encodeURIComponent(id)); await reload(); },
+
+    /* Contabilidade (site): resumo do mês, leitura de planilha enviada; as planilhas prontas são baixadas por link (api/contabilidade/planilhas). */
+    async contabResumo(mes) { return call('GET', '/contabilidade/resumo?mes=' + encodeURIComponent(mes)); },
+    async lerPlanilha(nome, base64) { return call('POST', '/contabilidade/ler-planilha', { nome, base64 }); },
 
     async exportCSV(filename, csvText) {
       const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });

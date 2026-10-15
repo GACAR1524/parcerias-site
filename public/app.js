@@ -637,6 +637,108 @@ function renderMyFinance() {
     <div class="tfoot"><span>Parcelas de honorários iniciais: a baixa é feita pelo escritório quando o cliente paga.</span><span>Dúvidas sobre um lançamento? Fale com o escritório.</span></div>`;
 }
 
+/* ============ contabilidade (site, só administração): planilhas do mês para o contador e importação ============ */
+const normName = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const onlyDigits = v => String(v || '').replace(/\D/g, '');
+function openContabilidade() {
+  const hoje = todayISO(), mesPadrao = hoje.slice(0, 7);
+  const meses = Array.from({ length: 14 }, (_, i) => ymAdd(mesPadrao, -i));
+  openSheet('Contabilidade', `
+    <div class="card-h"><h2>Planilhas do mês para o contador</h2><small>geradas a partir do Financeiro</small></div>
+    <p class="hint">Todo fechamento: escolha o mês, confira o resumo e baixe as duas planilhas no padrão já usado (<code>Recebimentos_Honorarios_Mes_MM_AAAA.xlsx</code> e <code>Alvaras_Judiciais_Mes_MM_AAAA.xlsx</code>). Entram as receitas <b>realizadas</b> do mês: honorários iniciais/êxito/parceria/consultoria na primeira; alvarás de honorários finais na segunda (bruto = condenação total do processo; a declarar = honorários recebidos).</p>
+    <div class="row" style="align-items:flex-end">
+      <div class="field"><label for="ct-mes">Mês</label><select id="ct-mes">${meses.map(m => `<option value="${m}" ${m === mesPadrao ? 'selected' : ''}>${ymLabel(m)}</option>`).join('')}</select></div>
+      <div class="field" style="justify-content:flex-end;flex-direction:row;gap:6px;flex-wrap:wrap"><a class="btn" id="ct-dl-rec" href="#" download>Baixar recebimentos</a><a class="btn" id="ct-dl-alv" href="#" download>Baixar alvarás</a></div>
+    </div>
+    <div id="ct-resumo" class="hint">Carregando o resumo…</div>
+    <div class="card-h" style="margin-top:16px"><h2>Importar planilha já montada</h2><small>recebimentos ou alvarás, no mesmo padrão</small></div>
+    <p class="hint">Se o mês foi fechado fora do sistema, envie a planilha: o sistema mostra uma prévia, casa cada linha com o processo cadastrado (pelo número ou pelo nome do cliente), avisa o que já está lançado e só grava o que você confirmar.</p>
+    <div class="row" style="align-items:flex-end">
+      <div class="field grow"><label for="ct-file">Planilha (.xlsx)</label><input type="file" id="ct-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>
+      <div class="field"><label for="ct-data">Data dos lançamentos</label><input type="date" id="ct-data" value="${hoje}"></div>
+    </div>
+    <p class="err" id="ct-err"></p>
+    <div id="ct-preview"></div>
+    <div class="form-actions"><button class="btn" type="button" id="ct-fechar">Fechar</button><button class="btn btn-primary" type="button" id="ct-ok" hidden>Importar</button></div>`);
+  const sheet = $('#sheet-b');
+  $('#ct-fechar').addEventListener('click', closeSheet);
+  const links = () => { const m = $('#ct-mes').value; $('#ct-dl-rec').href = `api/contabilidade/planilhas?mes=${encodeURIComponent(m)}&arquivo=recebimentos`; $('#ct-dl-alv').href = `api/contabilidade/planilhas?mes=${encodeURIComponent(m)}&arquivo=alvaras`; };
+  const resumo = async () => {
+    links(); const box = $('#ct-resumo'); box.innerHTML = 'Carregando o resumo…';
+    try {
+      const r = await api.contabResumo($('#ct-mes').value);
+      const semCpf = r.recebimentos.filter(x => !x.cpf).concat(r.alvaras.filter(x => !x.cpf));
+      box.innerHTML = `<div class="summary" style="margin-bottom:8px"><div><div class="lbl">Recebimentos simples</div><div class="v">${r.recebimentos.length} · ${brl(r.totais.recebimentos)}</div></div><div><div class="lbl">Alvarás</div><div class="v">${r.alvaras.length} · ${brl(r.totais.declarar)} a declarar</div></div><div><div class="lbl">Bruto / repassado</div><div class="v">${brl(r.totais.bruto)} / ${brl(r.totais.repassado)}</div></div></div>
+        ${semCpf.length ? `<span class="bad">${semCpf.length} ${semCpf.length === 1 ? 'linha sai' : 'linhas saem'} como “Não informado” no CPF/CNPJ:</span> ${esc(semCpf.map(x => x.cliente).join(', '))}. Preencha o CPF/CNPJ no cadastro do processo (ou na descrição da receita avulsa) e baixe de novo.` : (r.recebimentos.length || r.alvaras.length ? 'Todos os clientes com CPF/CNPJ informado.' : 'Nenhuma receita realizada neste mês.')}`;
+    } catch (e) { box.innerHTML = `<span class="bad">${esc(writeError(e))}</span>`; }
+  };
+  $('#ct-mes').addEventListener('change', resumo); resumo();
+
+  /* ---- importação ---- */
+  let plano = null;
+  const findCaseByNumber = dig => dig && dig.length >= 10 ? S.cases.find(c => onlyDigits(c.numeroProcesso) === dig) || null : null;
+  const findCaseByName = nome => { const n = normName(nome); if (!n) return null; const hits = S.cases.filter(c => normName(c.cliente) === n); if (hits.length === 1) return hits[0]; if (hits.length > 1) return hits.find(c => resultadoOf(c) === 'em_andamento') || hits[0]; const parc = S.cases.filter(c => normName(c.cliente).startsWith(n) || n.startsWith(normName(c.cliente))); return parc.length === 1 ? parc[0] : null; };
+  const preview = (r) => {
+    const ym = r.mes || $('#ct-data').value.slice(0, 7);
+    if (r.mes) { const [y, m] = r.mes.split('-'); $('#ct-data').value = `${r.mes}-${String(lastDay(y, m)).padStart(2, '0')}`; }
+    const itens = r.linhas.map(l => {
+      if (r.tipo === 'alvaras') {
+        const c = findCaseByNumber(l.processoDigitos), valor = l.declarar ?? 0;
+        let acao, aviso = '', ok = valor > 0;
+        if (!l.confere && l.confere != null) aviso = `bruto − repassado ≠ a declarar (${brl((l.bruto || 0) - (l.repassado || 0))} ≠ ${brl(valor)})`;
+        if (c && resultadoOf(c) === 'recebido' && c.financeiroStatus === 'lancado') { acao = 'ja'; ok = false; aviso = 'processo já marcado como recebido e lançado no Financeiro'; }
+        else if (c) acao = resultadoOf(c) === 'recebido' ? 'lancar' : 'receber';
+        else { acao = 'avulsa'; aviso = (aviso ? aviso + ' · ' : '') + 'processo não cadastrado: entra como receita avulsa'; }
+        return { ...l, c, valor, acao, aviso, ok, rotulo: `${l.processo || '(sem número)'} — ${l.cliente}` };
+      }
+      const c = findCaseByName(l.cliente), cat = /final|exito|êxito/i.test(l.tipo) ? 'Honorários de êxito' : 'Honorários iniciais';
+      const dup = S.finance.find(e => e.tipo === 'receita' && e.categoria === cat && String(e.data).slice(0, 7) === ym && Math.abs(num(e.valor) - l.valor) < 0.011 && ((c && e.caseId === c.id) || normName(e.descricao).includes(normName(l.cliente).split(' ')[0] || '§')));
+      let aviso = '', ok = l.valor > 0;
+      if (dup) { aviso = `já existe receita igual em ${fmtDate(dup.data)} (${esc(dup.descricao || dup.categoria)})`; ok = false; }
+      else if (!c) aviso = 'cliente sem processo cadastrado: receita avulsa';
+      return { ...l, c, cat, acao: 'receita', aviso, ok, rotulo: `${l.cliente}${l.cpf ? ' (' + l.cpf + ')' : ''}` };
+    });
+    plano = { tipo: r.tipo, itens };
+    $('#ct-preview').innerHTML = `<div class="card-h"><h2>${r.tipo === 'alvaras' ? 'Alvarás' : 'Recebimentos'} — ${esc(r.nome)}</h2><small>${itens.length} linha${itens.length === 1 ? '' : 's'}${r.mes ? ' · ' + ymLabel(r.mes) : ''}</small></div>
+      <div class="prov-list" style="max-height:45vh">${itens.map((it, i) => `<label class="prov-row ${it.ok ? '' : 'muted'}" for="ct-i-${i}"><input type="checkbox" id="ct-i-${i}" data-ct="${i}" ${it.ok ? 'checked' : ''}>
+        <span class="pr-main"><b>${esc(it.rotulo)}</b><small>${it.acao === 'receber' ? `marcar o processo como recebido (${esc(it.c.cliente)}) e lançar receita${isOffice(it.c) ? '' : ' + repasse'}` : it.acao === 'lancar' ? 'processo já recebido: lançar no Financeiro' : it.acao === 'ja' ? 'nada a fazer' : it.acao === 'avulsa' ? 'receita “Alvará de honorários finais” sem processo' : `receita “${it.cat}”${it.c ? ' vinculada a ' + esc(numFmt(it.c)) : ''}`}${it.aviso ? ` · <span class="${it.ok ? '' : 'bad'}">${it.aviso}</span>` : ''}</small></span>
+        <span class="pr-side"><b>${brl(it.valor)}</b>${r.tipo === 'alvaras' && it.bruto != null ? `<small>bruto ${brl(it.bruto)} · repassado ${brl(it.repassado || 0)}</small>` : ''}</span></label>`).join('')}</div>`;
+    $('#ct-ok').hidden = false; refreshOk();
+  };
+  const refreshOk = () => { const sel = $$('input[data-ct]:checked', sheet).length; $('#ct-ok').disabled = !sel; $('#ct-ok').textContent = sel ? `Importar ${sel} lançamento${sel === 1 ? '' : 's'}` : 'Importar'; };
+  sheet.addEventListener('change', e => { if (e.target.matches('input[data-ct]')) refreshOk(); });
+  $('#ct-file').addEventListener('change', async () => {
+    const f = $('#ct-file').files[0], err = $('#ct-err'); err.textContent = ''; $('#ct-preview').innerHTML = ''; $('#ct-ok').hidden = true; plano = null;
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) return err.textContent = 'Planilha maior que 4 MB.';
+    try {
+      const b64 = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result).split(',')[1] || ''); rd.onerror = () => rej(new Error('Não foi possível ler o arquivo.')); rd.readAsDataURL(f); });
+      $('#ct-preview').innerHTML = '<p class="hint">Lendo a planilha…</p>';
+      preview(await api.lerPlanilha(f.name, b64));
+    } catch (e) { $('#ct-preview').innerHTML = ''; err.textContent = writeError(e); }
+  });
+  $('#ct-ok').addEventListener('click', async () => {
+    if (!plano) return;
+    const data = $('#ct-data').value, err = $('#ct-err'); if (!data) return err.textContent = 'Informe a data dos lançamentos.';
+    const sel = $$('input[data-ct]:checked', sheet).map(i => plano.itens[+i.dataset.ct]);
+    $('#ct-ok').disabled = true; err.textContent = '';
+    try {
+      const receitas = []; let nProc = 0;
+      for (const it of sel) {
+        if (it.acao === 'receber' || it.acao === 'lancar') {
+          const c = it.c, d = { ...c, fase: natOf(c) === 'administrativo' ? c.fase : 'julgado', resultado: 'recebido', recebido: true, valorCondenacao: it.bruto != null ? it.bruto : c.valorCondenacao, honorariosSucumbenciais: c.honorariosSucumbenciais || 0, valorRecebido: it.valor, sucumbRecebido: 0, dataRecebimento: it.acao === 'lancar' && c.dataRecebimento ? c.dataRecebimento : data, honorariosPretendidos: it.acao === 'receber' ? it.valor : c.honorariosPretendidos, cpfCnpj: c.cpfCnpj || it.cpf || '' };
+          delete d.id;
+          await api.updateCase(c.id, d, { lancarFinanceiro: true, lancamentos: financeEntriesFor({ ...d, id: c.id }), statusAtual: c.financeiroStatus || 'nao' }); nProc++;
+        } else if (it.acao === 'avulsa') receitas.push({ tipo: 'receita', categoria: 'Alvará de honorários finais', descricao: `Processo ${it.processo} — ${it.cliente}${it.cpf ? ' (' + it.cpf + ')' : ''}`, valor: it.valor, data, observacoes: [it.obs, it.bruto != null ? `Bruto ${brl(it.bruto)}, repassado ao cliente ${brl(it.repassado || 0)}` : ''].filter(Boolean).join(' · ') });
+        else receitas.push({ tipo: 'receita', categoria: it.cat, descricao: `${it.cliente}${it.cpf ? ' (' + it.cpf + ')' : ''}`, valor: it.valor, data, observacoes: 'Importado da planilha da contabilidade', caseId: it.c ? it.c.id : null });
+      }
+      if (receitas.length) await api.createFinanceMany(receitas);
+      toast(`${receitas.length + nProc} lançamento${receitas.length + nProc === 1 ? '' : 's'} importado${receitas.length + nProc === 1 ? '' : 's'}${nProc ? ` (${nProc} processo${nProc === 1 ? '' : 's'} marcado${nProc === 1 ? '' : 's'} como recebido${nProc === 1 ? '' : 's'})` : ''}.`);
+      closeSheet();
+    } catch (e) { err.textContent = writeError(e); $('#ct-ok').disabled = false; }
+  });
+}
+
 /* ============ compra de créditos (só administração) ============ */
 function creditMetrics(c) {
   const compra = num(c.valorCompra), receber = num(c.valorReceber);
@@ -1277,6 +1379,7 @@ function renderFinance() {
       <div class="toolbar">
         <select id="ff-ano" data-ff="ano" aria-label="Ano">${financeYears().map(y => `<option ${y === ano ? 'selected' : ''}>${y}</option>`).join('')}</select>
         ${api.features.export ? '<button class="btn" type="button" data-act="export-finance">Exportar CSV</button>' : ''}
+        ${api.features.contabilidade && S.canWrite ? '<button class="btn" type="button" data-act="contabilidade" title="Planilhas do mês para o contador e importação das planilhas já montadas">Contabilidade</button>' : ''}
         ${S.canWrite ? '<button class="btn" type="button" data-act="new-receita">+ Receita</button><button class="btn" type="button" data-act="new-recorrente" title="Despesa que se repete todo mês (aluguel, energia, internet…), lançando meses passados e futuros de uma vez">+ Despesa recorrente</button><button class="btn btn-primary" type="button" data-act="new-despesa">+ Despesa</button>' : ''}
       </div></div>
     <section class="hero" aria-label="Resultado do ano">
@@ -1545,6 +1648,7 @@ function bindViewOnce(view) {
         case 'open-prov': return openProvisionedSheet();
         case 'open-pay': return openPayablesSheet();
         case 'del-filtered': return openBulkDeleteSheet(filteredFinance());
+        case 'contabilidade': return openContabilidade();
         case 'post-salaries': return postSalaries(S.ff.ano + '-' + S.ff.mes);
         case 'new-estagiario': return openPartnerForm(null, 'estagiario');
         case 'go-ponto': S.tab = 'ponto'; savePref('tab', S.tab); return render();
@@ -1664,7 +1768,10 @@ function openCaseForm(c, prefill) {
         <div class="field"><label for="c-num" id="c-num-label">${nat0 === 'judicial' ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo'}</label><input type="text" id="c-num" inputmode="${nat0 === 'judicial' ? 'numeric' : 'text'}" placeholder="${nat0 === 'judicial' ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'}" value="${esc(c?.numeroProcesso || '')}" required></div>
         <div class="field"><label for="c-data">Data do protocolo</label><input type="date" id="c-data" value="${esc((d.dataProtocolo || '').slice(0, 10))}" required></div>
       </div>
-      <div class="field"><label for="c-cliente">Nome do cliente</label><input type="text" id="c-cliente" value="${esc(c?.cliente || d.cliente || '')}" required></div>
+      <div class="row">
+        <div class="field"><label for="c-cliente">Nome do cliente</label><input type="text" id="c-cliente" value="${esc(c?.cliente || d.cliente || '')}" required></div>
+        <div class="field"><label for="c-cpf">CPF / CNPJ do cliente <small>(opcional — vai para a planilha do contador)</small></label><input type="text" id="c-cpf" inputmode="numeric" value="${esc(c?.cpfCnpj || base?.cpfCnpj || '')}" placeholder="000.000.000-00"></div>
+      </div>
       <div class="field"><label for="c-tipo" id="c-tipo-label">${nat0 === 'judicial' ? 'Tipo de ação judicial' : 'Tipo de procedimento administrativo'}</label><input type="text" id="c-tipo" list="tipos-list" value="${esc(c?.tipoAcao || '')}" placeholder="Escolha ou digite" required><datalist id="tipos-list">${Array.from(new Set([...TIPOS, ...S.cases.map(x => x.tipoAcao).filter(Boolean)])).map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
       <div class="field"><label for="c-parent">Vinculado ao processo <small>(opcional — ex.: agravo de instrumento ou embargos ligados a uma execução)</small></label><select id="c-parent"><option value="">Nenhum — este é o processo principal</option>${S.cases.filter(x => x.id !== c?.id && rootOf(x).id !== c?.id).sort((a, b) => (a.cliente || '').localeCompare(b.cliente || '') || (b.dataProtocolo || '').localeCompare(a.dataProtocolo || '')).map(x => `<option value="${esc(x.id)}" ${x.id === (d.parentId || '') ? 'selected' : ''}>${esc(x.cliente)} — ${esc(numFmt(x))} · ${esc(x.tipoAcao || '')}</option>`).join('')}</select>${c && childrenOf(c).length ? `<p class="hint" style="margin:4px 0 0">Este processo tem ${childrenOf(c).length} vinculado${childrenOf(c).length === 1 ? '' : 's'}: ${esc(childrenOf(c).map(k => `${k.tipoAcao || 'processo'} ${numFmt(k)}`).join('; '))}.</p>` : ''}</div>
       <fieldset id="c-values"><legend>Honorários</legend>
@@ -1918,7 +2025,7 @@ function openCaseForm(c, prefill) {
       pctSucumbParceiro: off ? 0 : num(g('c-psp').value),
       pctHonorarios: curBase() !== 'fixo' ? num(g('c-phon').value) : null,
       honorariosIniciais: parseMoney(g('c-hini').value),
-      parentId: g('c-parent').value || null,
+      parentId: g('c-parent').value || null, cpfCnpj: g('c-cpf').value.trim(),
       natureza: curNat(), fase: curFase(), resultado: res,
       numeroProcesso: curNat() === 'judicial' ? cnj(g('c-num').value) : g('c-num').value.trim(), cliente: g('c-cliente').value.trim(), tipoAcao: g('c-tipo').value.trim(), dataProtocolo: g('c-data').value,
       honorariosPretendidos: parseMoney(g('c-hon').value), custoLead: parseMoney(g('c-lead').value),
@@ -1966,6 +2073,7 @@ function openCaseForm(c, prefill) {
     if (data.resultado === 'recebido' && data.natureza !== 'administrativo' && data.baseHonorarios !== 'reducao_debito' && data.valorCondenacao == null && !(data.honorariosSucumbenciais > 0) && !(data.honorariosPretendidos > 0)) return err.textContent = 'Informe o valor total da condenação e quanto dela é honorário sucumbencial.';
     if (!data.numeroProcesso) return err.textContent = 'Informe o número do processo.';
     if (!data.cliente) return err.textContent = 'Informe o nome do cliente.';
+    if (data.cpfCnpj && ![11, 14].includes(data.cpfCnpj.replace(/\D/g, '').length)) return err.textContent = 'CPF/CNPJ inválido: use 11 dígitos (CPF) ou 14 (CNPJ).';
     if (!data.tipoAcao) return err.textContent = 'Informe o tipo de ação.';
     if (!data.dataProtocolo) return err.textContent = 'Informe a data do protocolo.';
     if (Math.abs(data.pctParceiro + data.pctNosso - 100) > 0.01) return err.textContent = 'Os percentuais precisam somar 100%.';

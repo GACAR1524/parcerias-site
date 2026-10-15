@@ -35,7 +35,7 @@ app.use(helmet({
   referrerPolicy: { policy: 'same-origin' }
 }));
 app.use(compression());
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({ limit: '6mb' })); // planilhas da contabilidade chegam em base64 (até ~4 MB)
 app.use(cookieParser());
 app.use(attachUser);
 
@@ -48,6 +48,7 @@ api.use('/cases', require('./routes/cases'));
 api.use('/credits', require('./routes/credits'));
 api.use('/finance', require('./routes/finance'));
 api.use('/contracts', require('./routes/contracts'));
+api.use('/contabilidade', require('./routes/contabilidade'));
 const ponto = require('./routes/ponto');
 api.use('/ponto', ponto);
 
