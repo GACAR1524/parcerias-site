@@ -98,9 +98,16 @@ api.use((err, _req, res, _next) => {
 });
 app.use('/api', api);
 
-/* ---------- front-end ---------- */
+/* ---------- front-end ----------
+ * Cada versão dos arquivos do app ganha um endereço próprio (app.js?v=<hash do conteúdo>): depois de uma atualização o
+ * navegador baixa a versão nova na hora, em vez de reaproveitar a que guardou. O index.html nunca fica em cache. */
 const PUBLIC = path.join(__dirname, '..', 'public');
-app.use(express.static(PUBLIC, { maxAge: '1h', etag: true, index: 'index.html' }));
-app.get('*', (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
+const ASSETS = ['app.js', 'styles.css', 'api-rest.js'];
+const ASSET_VERSION = require('crypto').createHash('md5').update(Buffer.concat(ASSETS.map(f => fs.readFileSync(path.join(PUBLIC, f))))).digest('hex').slice(0, 10);
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8').replace(/(href|src)="(app\.js|styles\.css|api-rest\.js)"/g, `$1="$2?v=${ASSET_VERSION}"`);
+const sendIndex = (_req, res) => { res.set('Cache-Control', 'no-cache'); res.type('html').send(INDEX_HTML); };
+app.get(['/', '/index.html'], sendIndex);
+app.use(express.static(PUBLIC, { maxAge: '1d', etag: true, index: false }));
+app.get('*', sendIndex);
 
 app.listen(PORT, () => console.log(`Gestão geral Costa de Araújo rodando na porta ${PORT} (banco: ${DB_PATH})`));
