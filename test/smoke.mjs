@@ -335,6 +335,12 @@ try {
   r = await call('a', 'GET', '/bootstrap');
   check('excluir o principal solta o vinculado (continua cadastrado, sem vínculo)', r.data.cases.some(x => x.id === cidChild && x.parentId === null), r.data.cases.find(x => x.id === cidChild));
   await call('a', 'DELETE', `/cases/${cidChild}`);
+  // administrativo concedido: valor concedido (valor_condenacao) × % = honorários; divisão com o parceiro; receita não é alvará
+  r = await call('a', 'POST', '/cases', { ...caso, parceiroId: pid, natureza: 'administrativo', numeroProcesso: '55555.000002/2026-11', cliente: 'Beneficiário Adm', tipoAcao: 'Requerimento administrativo', baseHonorarios: 'valor_causa', pctHonorarios: 30, honorariosPretendidos: 0, fase: 'julgado', resultado: 'recebido', valorCondenacao: 5000, dataRecebimento: '2026-10-15', lancarFinanceiro: true });
+  fin = await finance();
+  const recAdm = fin.find(e => e.caseId === r.data.id && e.tipo === 'receita'), repAdm = fin.find(e => e.caseId === r.data.id && e.tipo === 'despesa');
+  check('administrativo concedido: honorários 30% de 5 mil = 1.500, recebido = 1.500, receita "Honorários de parceria" (não alvará) e repasse 40% = 600', r.status === 201 && r.data.case.honorariosPretendidos === 1500 && r.data.case.valorRecebido === 1500 && r.data.case.honorariosSucumbenciais === 0 && recAdm && recAdm.valor === 1500 && recAdm.categoria === 'Honorários de parceria' && repAdm && repAdm.valor === 600, { c: r.data.case, recAdm, repAdm });
+  await call('a', 'DELETE', `/cases/${r.data.id}`);
 
   // ---- honorários sucumbenciais: dentro da condenação, só dos advogados, divisão própria ----
   r = await call('a', 'POST', '/cases', { titularidade: 'escritorio', numeroProcesso: '0800009-99.2026.8.17.0001', cliente: 'Condenado S.A.', tipoAcao: 'Ação indenizatória', dataProtocolo: '2026-10-01', valorAcao: 80000, pctHonorarios: 20, fase: 'julgado', valorCondenacao: 110000, honorariosSucumbenciais: 10000 });

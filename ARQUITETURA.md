@@ -358,9 +358,13 @@ VINCULADO; o principal mostra "N vinculados"). Os honorários de cada processo s
 **podem ser zero** (iniciais, finais em % ou valor, sucumbenciais) — a tela só pede confirmação ao
 marcar "recebido" sem nenhum valor.
 
-**Requerimento administrativo → judicializar.** No administrativo todos os valores são opcionais
-e a tela troca os rótulos (Em análise / Decidido; Concedido e recebido / Indeferido), não pergunta
-condenação nem sucumbência e sugere a base *valor combinado*. Ao marcar **Indeferido**, a caixa
+**Requerimento administrativo → concedido ou judicializar.** No administrativo todos os valores
+são opcionais e a tela troca os rótulos (Em análise / Decidido; Concedido e recebido / Indeferido).
+A base padrão é "% sobre o valor concedido": ao marcar **Concedido e recebido**, a tela pergunta o
+**valor total concedido ao cliente** (guardado em `valor_condenacao`, sem sucumbência), calcula os
+honorários como % dele (ou valor combinado), mostra a divisão com o parceiro/associado pelos
+percentuais do processo e lança no Financeiro como *Honorários de parceria / de êxito* (nunca
+"alvará") — a parte do cliente não entra no Financeiro. Ao marcar **Indeferido**, a caixa
 "Judicializar ao salvar" (marcada por padrão) abre, depois de salvar, o cadastro da ação judicial
 já vinculada ao requerimento (`parent_id`), com cliente, titularidade e advogado herdados e base
 *valor da causa* para informar o valor do cálculo; um requerimento já judicializado mostra a ação

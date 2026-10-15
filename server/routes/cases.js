@@ -36,13 +36,14 @@ function financeEntriesFor(c, partner) {
   const composicao = sucRec > 0 ? `Honorários contratuais ${brl(contrRec)} + honorários sucumbenciais ${brl(sucRec)}.` : '';
   const numero = c.natureza === 'judicial' ? cnj(c.numeroProcesso) : c.numeroProcesso;
   const ref = `Processo ${numero} — ${c.cliente}`;
+  const alvara = c.fase === 'julgado' && c.natureza !== 'administrativo'; // requerimento administrativo concedido não é alvará
   if (c.titularidade === 'escritorio' || !c.parceiroId) {
-    return recebido > 0 ? [{ tipo: 'receita', categoria: c.fase === 'julgado' ? 'Alvará de honorários finais' : 'Honorários de êxito', descricao: `${ref} (escritório)`, valor: round2(recebido), observacoes: composicao }] : [];
+    return recebido > 0 ? [{ tipo: 'receita', categoria: alvara ? 'Alvará de honorários finais' : 'Honorários de êxito', descricao: `${ref} (escritório)`, valor: round2(recebido), observacoes: composicao }] : [];
   }
   const pS = c.pctSucumbParceiro || 0;
   const parceiro = round2(contrRec * c.pctParceiro / 100 + sucRec * pS / 100), nossa = round2(recebido - parceiro);
   const divisao = sucRec > 0 ? `${c.pctParceiro}% de ${brl(contrRec)} (contratuais) + ${pS}% de ${brl(sucRec)} (sucumbenciais).` : '';
-  const categoria = c.fase === 'julgado' ? 'Alvará de honorários finais' : (associado ? 'Honorários de êxito' : 'Honorários de parceria');
+  const categoria = alvara ? 'Alvará de honorários finais' : (associado ? 'Honorários de êxito' : 'Honorários de parceria');
   const out = [];
   if (!associado && c.fluxoRecebimento === 'parceiro') out.push({ tipo: 'receita', categoria, descricao: `${ref} (parte do escritório, repassada por ${partnerNome})`, valor: nossa, observacoes: sucRec > 0 ? `Total recebido ${brl(recebido)}: ${composicao} Parte do escritório = total − repasse (${divisao})` : '' });
   else {

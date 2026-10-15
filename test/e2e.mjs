@@ -129,6 +129,17 @@ try {
   await page.click('tr[data-id]:has-text("12345.678901/2026-00")'); await page.waitForSelector('#case-form');
   check('ao reabrir o requerimento indeferido, mostra "Já judicializado" em vez da caixa', /Já judicializado/.test(await page.textContent('#c-jud-box')) && !(await page.$('#c-jud')));
   await page.click('#c-cancel');
+  // administrativo concedido: valor concedido × % = honorários, divididos com o parceiro e lançados no Financeiro
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-partner', { index: 1 }); await page.check('#c-nat-adm'); await page.waitForTimeout(100);
+  check('administrativo novo já vem com honorários em % sobre o valor (concedido)', await page.isChecked('#c-base-causa') && /valor concedido/i.test(await page.textContent('#c-base-causa-txt')));
+  await page.fill('#c-num', '55555.000001/2026-11'); await page.fill('#c-cliente', 'Beneficiário Adm'); await page.fill('#c-tipo', 'Requerimento administrativo'); await page.fill('#c-phon', '30');
+  await page.check('#c-res-rec'); await page.waitForSelector('#c-lancar'); await page.waitForTimeout(100);
+  check('concedido: pergunta o valor concedido ao cliente, sem sucumbenciais', /valor total concedido/.test(await page.textContent('#c-cond-head')) && await page.isVisible('#c-vcond') && !(await page.isVisible('#c-vsuc')) && !(await page.isVisible('#c-vrecs-field')));
+  await page.fill('#c-vcond', '5000'); await page.press('#c-vcond', 'Tab'); await page.waitForTimeout(100);
+  check('honorários = 30% de R$ 5.000 = R$ 1.500, com a divisão com o parceiro no aviso', (await page.inputValue('#c-hon')) === '1.500,00' && (await page.inputValue('#c-vrecc')) === '1.500,00' && /750,00 do parceiro/.test((await page.textContent('#c-cond-hint')).replace(/\u00a0/g, ' ')) && /cliente fica com R\$ 3\.500,00/.test((await page.textContent('#c-cond-hint')).replace(/\u00a0/g, ' ')));
+  check('prévia do Financeiro: receita de honorários (R$ 1.500) + repasse ao parceiro (R$ 750), sem alvará', /Receita.*Honorários de parceria.*1\.500,00/.test((await page.textContent('#fin-box')).replace(/\u00a0/g, ' ')) && /Repasse a parceiro.*750,00/.test((await page.textContent('#fin-box')).replace(/\u00a0/g, ' ')));
+  await page.click('#c-cancel');
 
   // créditos
   await page.click('[data-tab="credits"]');
