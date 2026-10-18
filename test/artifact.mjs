@@ -93,6 +93,13 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('Empresa Ré') && tr.textContent.includes('no financeiro')), null, { timeout: 8000 });
   check('financeiro recebeu receita total e bonificação (20%)', await page.evaluate(() => { const f = [...window.__mockStore.finance.values()]; return f.length === 2 && f.some(e => e.tipo === 'receita' && e.valor === 10000) && f.some(e => e.tipo === 'despesa' && e.categoria === 'Bonificação de associado' && e.valor === 2000); }));
 
+  // número duplicado: aviso ao digitar e botão travado; o banco também recusa
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-partner', { index: 1 }); await page.fill('#c-num', '08011111120268170001'); await page.waitForTimeout(100);
+  check('artifact: número já cadastrado mostra o aviso e trava o Salvar', await page.isVisible('#c-num-dup') && /Empresa Ré/.test(await page.textContent('#c-num-dup')) && await page.isDisabled('#c-save'));
+  check('artifact: a gravação também é recusada pela camada de dados', await page.evaluate(async () => { try { await window.ParceriasAPI.createCase({ titularidade: 'escritorio', natureza: 'judicial', numeroProcesso: '0801111-11.2026.8.17.0001', cliente: 'Dup', tipoAcao: 'x', dataProtocolo: '2026-10-01', fase: 'em_curso', resultado: 'em_andamento', pctParceiro: 0, pctNosso: 100 }); return false; } catch (e) { return /Já existe um processo/.test(e.message); } }));
+  await page.click('#c-cancel'); await page.waitForTimeout(100);
+
   // processo só do escritório: valor pretendido × nossa % → honorários previstos
   await page.click('[data-act="new-case"]'); await page.check('#c-tit-esc'); await page.waitForTimeout(100);
   await page.fill('#c-num', '08033333320268170001'); await page.fill('#c-cliente', 'Cliente Direto'); await page.fill('#c-tipo', 'Ação indenizatória');

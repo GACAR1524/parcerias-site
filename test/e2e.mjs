@@ -61,6 +61,17 @@ try {
   await page.click('#c-save');
   await page.waitForSelector('tr[data-id]', { timeout: 5000 });
   check('processo aparece na tabela com CNJ formatado', (await page.textContent('tr[data-id]')).includes('0801234-56.2026.8.17.0001'));
+  // número duplicado: aviso ao digitar, botão travado e nada gravado
+  await page.click('[data-act="new-case"]'); await page.waitForSelector('#case-form');
+  await page.selectOption('#c-partner', { index: 1 });
+  await page.fill('#c-num', '0801234-56.2026.8.17.0001'); await page.fill('#c-cliente', 'Duplicado'); await page.fill('#c-tipo', 'Teste'); await page.waitForTimeout(100);
+  check('ao digitar um número já cadastrado aparece o aviso com o cliente e o botão Salvar fica travado', await page.isVisible('#c-num-dup') && /João Pereira/.test(await page.textContent('#c-num-dup')) && await page.isDisabled('#c-save'));
+  await page.check('#c-nat-adm'); await page.waitForTimeout(100);
+  check('a trava vale em qualquer natureza (administrativo com o mesmo número)', await page.isVisible('#c-num-dup') && await page.isDisabled('#c-save'));
+  await page.check('#c-nat-jud'); await page.fill('#c-num', '08012345620268170002'); await page.waitForTimeout(100);
+  check('corrigindo o número o aviso some e o botão volta', !(await page.isVisible('#c-num-dup')) && !(await page.isDisabled('#c-save')));
+  await page.click('#c-cancel'); await page.waitForTimeout(100);
+  check('nenhum processo duplicado foi gravado', (await page.$$('tr[data-id]')).length === 1);
   // processo administrativo
   await page.click('[data-act="new-case"]');
   await page.selectOption('#c-partner', { index: 1 });

@@ -64,6 +64,15 @@ try {
   await call('p', 'DELETE', `/cases/${r.data.id}`);
   r = await call('p', 'POST', '/cases', { ...caso, natureza: 'penal' });
   check('natureza inválida é recusada', r.status === 400, r);
+  // número único: mesmo número (com ou sem máscara, em qualquer natureza) não cadastra
+  r = await call('p', 'POST', '/cases', { ...caso, cliente: 'Outro Cliente' });
+  check('número já cadastrado é recusado (409) com o nome do cliente existente', r.status === 409 && /Já existe um processo/.test(r.data.error) && /João Pereira/.test(r.data.error), r);
+  r = await call('p', 'POST', '/cases', { ...caso, numeroProcesso: '0801234-56.2026.8.17.0001 ', cliente: 'Outro Cliente' });
+  check('mesmo número com máscara/espaço também é recusado', r.status === 409, r);
+  r = await call('p', 'POST', '/cases', { ...caso, natureza: 'administrativo', numeroProcesso: '08012345620268170001', cliente: 'Outro Cliente' });
+  check('mesmo número em outra natureza também é recusado', r.status === 409, r);
+  r = await call('p', 'GET', '/bootstrap');
+  check('nada foi gravado nas tentativas duplicadas', r.data.cases.length === 1, r.data.cases.length);
 
   r = await call('a', 'POST', '/partners', { nome: 'Rafael Menezes', usuario: 'rafael', senha: 'parceiro2' });
   const pid2 = r.data.id;
@@ -75,6 +84,12 @@ try {
   check('parceiro vê só os próprios processos', r.data.cases.length === 1 && r.data.partners.length === 1, r.data);
   r = await call('p', 'PUT', `/cases/${cid2}`, caso);
   check('parceiro não altera processo alheio', r.status === 404, r);
+  r = await call('p', 'POST', '/cases', { ...caso, numeroProcesso: '0800001-11.2026.8.17.0001', cliente: 'Tentativa' });
+  check('número de processo de outro advogado é recusado sem revelar o cliente dele', r.status === 409 && /outro advogado/.test(r.data.error) && !/Ana Souza/.test(r.data.error), r);
+  r = await call('p', 'PUT', `/cases/${cid}`, { ...caso, numeroProcesso: '0800001-11.2026.8.17.0001' });
+  check('editar para um número já existente também é recusado', r.status === 409, r);
+  r = await call('p', 'PUT', `/cases/${cid}`, { ...caso, cliente: 'João Pereira' });
+  check('editar mantendo o próprio número continua permitido', r.status === 200, r);
   r = await call('a', 'GET', '/bootstrap');
   check('admin vê tudo', r.data.cases.length === 2 && r.data.partners.length === 2, r.data);
 

@@ -140,8 +140,17 @@
 
     /* Situação financeira do processo: 'nao' | 'pendente' (recebido, aguardando o escritório) | 'lancado'.
        Só o administrador grava em `finance`; o parceiro deixa como pendente. */
+    /* Número único: recusa cadastrar/alterar para um número que outro processo já tem (o parceiro só confere entre os próprios). */
+    async _dupe(numero, selfId) {
+      const key = String(numero || '').toLowerCase().replace(/[^a-z0-9]/g, ''); if (!key) return;
+      const admin = st.session.role === 'admin';
+      const q = await guard((admin ? st.db.collection('cases') : st.db.collection('cases').where('parceiroId', '==', st.session.partnerId)).get());
+      const d = q.docs.find(x => x.id !== selfId && String(x.data().numeroProcesso || '').toLowerCase().replace(/[^a-z0-9]/g, '') === key);
+      if (d) throw new Error(`Já existe um processo cadastrado com este número: ${d.data().cliente}${d.data().tipoAcao ? ' (' + d.data().tipoAcao + ')' : ''}. Nada foi gravado: confira o número.`);
+    },
     async createCase(d, opts = {}) {
       const now = new Date().toISOString(), admin = st.session.role === 'admin';
+      await this._dupe(d.numeroProcesso, null);
       const fin = d.resultado === 'recebido' ? 'pendente' : 'nao';
       const doc = { ...d, financeiroStatus: fin, financeiroEm: null, criadoPor: admin ? 'admin' : st.session.partnerId, criadoEm: now, atualizadoEm: now }; delete doc.dataRepasse;
       const ref = await guard(st.db.collection('cases').add(doc));
@@ -150,6 +159,7 @@
     },
     async updateCase(id, d, opts = {}) {
       const now = new Date().toISOString(), admin = st.session.role === 'admin';
+      if (opts.numeroAtual == null || String(opts.numeroAtual).replace(/[^a-z0-9]/gi, '').toLowerCase() !== String(d.numeroProcesso || '').replace(/[^a-z0-9]/gi, '').toLowerCase()) await this._dupe(d.numeroProcesso, id);
       const patch = { ...d, atualizadoEm: now, atualizadoPor: admin ? 'admin' : st.session.partnerId };
       delete patch.dataRepasse; // só serve para a baixa abaixo; não é campo do processo
       const prev = opts.statusAtual || 'nao', fluxoAntes = opts.fluxoAtual || 'escritorio';

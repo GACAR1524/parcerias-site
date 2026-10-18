@@ -14,6 +14,18 @@ const round2 = v => Math.round(v * 100) / 100;
 
 /* Escopo: o parceiro só enxerga (e só grava em) os próprios processos. */
 function scoped(req, row) { return req.user.role === 'admin' || row.partner_id === req.user.partner_id; }
+
+/* Número único: dois processos não podem ter o mesmo número (comparado sem pontos, traços e espaços, em qualquer natureza
+ * e de qualquer advogado). Na edição só é conferido quando o número mudou, para não travar cadastros antigos repetidos. */
+const numKey = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const NUMS = db.prepare('SELECT id, numero_processo, cliente, tipo_acao, partner_id FROM cases');
+function duplicado(numero, selfId, req) {
+  const k = numKey(numero); if (!k) return null;
+  const d = NUMS.all().find(r => r.id !== selfId && numKey(r.numero_processo) === k);
+  if (!d) return null;
+  const meu = req.user.role === 'admin' || d.partner_id === req.user.partner_id;
+  return `Já existe um processo cadastrado com este número${meu ? `: ${d.cliente}${d.tipo_acao ? ' (' + d.tipo_acao + ')' : ''}` : ' (de outro advogado — confira com o escritório)'}. Nada foi gravado: confira o número.`;
+}
 /* Vínculo com o processo principal: precisa existir, estar no escopo de quem grava, não ser o próprio nem um já vinculado a este (sem ciclos). */
 function checkParent(req, c, selfId) {
   if (!c.parentId) return null;
@@ -114,6 +126,7 @@ router.post('/', (req, res, next) => {
     const c = caseInput(req.body);
     if (req.user.role === 'partner') { c.titularidade = 'parceria'; c.parceiroId = req.user.partner_id; }
     if (c.titularidade === 'parceria' && !partnerById.get(c.parceiroId)) return res.status(400).json({ error: 'Parceiro inválido.' });
+    const dupe = duplicado(c.numeroProcesso, null, req); if (dupe) return res.status(409).json({ error: dupe });
     const pe = checkParent(req, c, null); if (pe) return res.status(400).json({ error: pe });
     const now = nowISO(), id = uuid();
     db.transaction(() => {
@@ -138,6 +151,7 @@ router.put('/:id', (req, res, next) => {
     const c = caseInput(req.body);
     if (req.user.role === 'partner') { c.titularidade = 'parceria'; c.parceiroId = cur.partner_id; }
     if (c.titularidade === 'parceria' && !partnerById.get(c.parceiroId)) return res.status(400).json({ error: 'Parceiro inválido.' });
+    if (numKey(c.numeroProcesso) !== numKey(cur.numero_processo)) { const dupe = duplicado(c.numeroProcesso, cur.id, req); if (dupe) return res.status(409).json({ error: dupe }); }
     const pe = checkParent(req, c, cur.id); if (pe) return res.status(400).json({ error: pe });
     db.transaction(() => {
       const fin = settleFinance({ cur, c, id: cur.id, req });

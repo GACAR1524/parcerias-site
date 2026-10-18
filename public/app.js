@@ -43,6 +43,9 @@ const cnj = raw => {
   if (d.length === 20) return `${d.slice(0, 7)}-${d.slice(7, 9)}.${d.slice(9, 13)}.${d.slice(13, 14)}.${d.slice(14, 16)}.${d.slice(16)}`;
   return String(raw ?? '').trim();
 };
+/* Número único de processo: comparado sem pontos, traços e espaços, em qualquer natureza. Devolve o processo já cadastrado com o mesmo número. */
+const numKey = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const dupCase = (numero, selfId) => { const k = numKey(numero); return k ? S.cases.find(x => x.id !== selfId && numKey(x.numeroProcesso) === k) || null : null; };
 const normUser = u => String(u ?? '').trim().toLowerCase().replace(/\s+/g, '.');
 const natOf = c => c.natureza === 'administrativo' ? 'administrativo' : 'judicial';
 const faseOf = c => c.fase === 'julgado' ? 'julgado' : 'em_curso';
@@ -1788,7 +1791,7 @@ function openCaseForm(c, prefill) {
         <label class="check" for="c-fase-julg" style="margin:0"><input type="radio" name="c-fase" id="c-fase-julg" value="julgado" ${fase0 === 'julgado' ? 'checked' : ''}><span id="c-fase-julg-txt">${adm0 ? 'Decidido<small>já houve resposta (deferido ou indeferido)</small>' : 'Julgado<small>já há decisão — informe a condenação total e os sucumbenciais</small>'}</span></label>
       </div>
       <div class="row">
-        <div class="field"><label for="c-num" id="c-num-label">${nat0 === 'judicial' ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo'}</label><input type="text" id="c-num" inputmode="${nat0 === 'judicial' ? 'numeric' : 'text'}" placeholder="${nat0 === 'judicial' ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'}" value="${esc(c?.numeroProcesso || '')}" required></div>
+        <div class="field"><label for="c-num" id="c-num-label">${nat0 === 'judicial' ? 'Número do processo <small>(CNJ)</small>' : 'Número do processo / protocolo'}</label><input type="text" id="c-num" inputmode="${nat0 === 'judicial' ? 'numeric' : 'text'}" placeholder="${nat0 === 'judicial' ? '0000000-00.0000.0.00.0000' : 'ex.: 12345.678901/2026-00'}" value="${esc(c?.numeroProcesso || '')}" required aria-describedby="c-num-dup"><p class="hint" id="c-num-dup" hidden style="color:var(--bad);margin:4px 0 0"></p></div>
         <div class="field"><label for="c-data">Data do protocolo</label><input type="date" id="c-data" value="${esc((d.dataProtocolo || '').slice(0, 10))}" required></div>
       </div>
       <div class="field"><label for="c-cliente">Nome do cliente</label><input type="text" id="c-cliente" value="${esc(c?.cliente || d.cliente || '')}" required></div>
@@ -1987,7 +1990,16 @@ function openCaseForm(c, prefill) {
     }));
   }
   refreshHon();
-  g('c-num').addEventListener('blur', () => { if (curNat() === 'judicial') g('c-num').value = cnj(g('c-num').value); });
+  g('c-num').addEventListener('blur', () => { if (curNat() === 'judicial') g('c-num').value = cnj(g('c-num').value); checkDup(); });
+  // duplicidade: o sistema não aceita dois processos com o mesmo número (na edição, só se o número foi alterado)
+  function checkDup() {
+    const dup = (isNew || numKey(g('c-num').value) !== numKey(c?.numeroProcesso)) ? dupCase(g('c-num').value, c?.id) : null;
+    const box = g('c-num-dup'); box.hidden = !dup;
+    box.innerHTML = dup ? `Este número já está cadastrado: <b>${esc(dup.cliente)}</b>${dup.tipoAcao ? ' (' + esc(dup.tipoAcao) + ')' : ''}${isAdmin() && !isOffice(dup) ? ' — ' + esc(partnerName(dup.parceiroId)) : ''}. O sistema não cadastra dois processos com o mesmo número.` : '';
+    g('c-save').disabled = !!dup; g('c-save').title = dup ? 'Número de processo já cadastrado' : '';
+    return dup;
+  }
+  g('c-num').addEventListener('input', checkDup); checkDup();
   const curAdm = () => curNat() === 'administrativo';
   f.querySelectorAll('input[name="c-nat"]').forEach(r => r.addEventListener('change', () => {
     const jud = curNat() === 'judicial', adm = !jud;
@@ -2116,13 +2128,9 @@ function openCaseForm(c, prefill) {
     if (data.resultado === 'recebido' && !data.dataRecebimento) return err.textContent = 'Informe a data do recebimento.';
     if (data.resultado === 'recebido' && !(data.valorRecebido > 0) && !f.dataset.zeroOk) { err.textContent = 'Nenhum valor recebido informado (contratuais e sucumbenciais zerados). Clique em salvar de novo para confirmar que não houve recebimento.'; f.dataset.zeroOk = '1'; return; }
     if (data.resultado === 'perdido' && !data.dataEncerramento) return err.textContent = 'Informe a data do encerramento.';
-    if (isNew) {
-      const digits = data.numeroProcesso.replace(/\D/g, '');
-      const dup = digits.length >= 10 ? S.cases.find(x => natOf(x) === data.natureza && String(x.numeroProcesso || '').replace(/\D/g, '') === digits) : null;
-      if (dup && !f.dataset.dupOk) { err.textContent = `Já existe um processo com este número (${dup.cliente}). Clique em salvar novamente para cadastrar mesmo assim.`; f.dataset.dupOk = '1'; return; }
-    }
+    if (checkDup()) { const dup = dupCase(data.numeroProcesso, c?.id); return err.textContent = `Já existe um processo cadastrado com este número (${dup.cliente}). Nada foi gravado: confira o número.`; }
     err.textContent = ''; g('c-save').disabled = true;
-    const opts = { lancarFinanceiro: data.resultado === 'recebido' && wantsPost(), lancamentos: data.resultado === 'recebido' ? financeEntriesFor({ ...data, id: c?.id }) : [], statusAtual: finStatus, fluxoAtual: c?.fluxoRecebimento || 'escritorio' };
+    const opts = { lancarFinanceiro: data.resultado === 'recebido' && wantsPost(), lancamentos: data.resultado === 'recebido' ? financeEntriesFor({ ...data, id: c?.id }) : [], statusAtual: finStatus, fluxoAtual: c?.fluxoRecebimento || 'escritorio', numeroAtual: c?.numeroProcesso || '' };
     const lancarHI = isNew && admin && data.honorariosIniciais > 0 && !!g('c-hini-fin')?.checked;
     const judicializar = data.natureza === 'administrativo' && data.resultado === 'perdido' && !!g('c-jud')?.checked;
     try {

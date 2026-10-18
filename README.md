@@ -11,7 +11,9 @@ Sistema web para o escritório controlar os quatro braços do negócio em um só
   (ao marcar recebido, o sistema pergunta a condenação total, os sucumbenciais e quanto recebemos
   de cada um); na defesa do executado, os honorários finais incidem sobre a redução conseguida no
   débito; qualquer honorário pode ser zero; agravos e embargos ficam **vinculados** ao processo
-  principal; as parcelas de honorários iniciais mostram quem está em dia ou em atraso; em "quem
+  principal; o **número do processo é único** (o sistema avisa ao digitar e não cadastra nem altera
+  para um número que já exista, em qualquer natureza ou advogado); as parcelas de honorários
+  iniciais mostram quem está em dia ou em atraso; em "quem
   recebeu o dinheiro", além de *escritório recebeu e repassa* e *parceiro recebeu e repassou*, há
   *parceiro recebeu e ainda não repassou*: a parte do escritório fica **a receber** (créditos
   provisionados, aviso por parceiro no painel e no Financeiro, "A repassar ao escritório" na tela
