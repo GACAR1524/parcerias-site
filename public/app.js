@@ -690,14 +690,14 @@ function openContabilidade() {
     if (r.mes) { const [y, m] = r.mes.split('-'); $('#ct-data').value = `${r.mes}-${String(lastDay(y, m)).padStart(2, '0')}`; }
     const itens = r.linhas.map(l => {
       if (r.tipo === 'alvaras') {
-        const c = findCaseByNumber(l.processoDigitos), valor = l.declarar ?? 0;
-        let acao, aviso = '', ok = valor > 0;
-        if (!l.confere && l.confere != null) aviso = `bruto − repassado ≠ a declarar (${brl((l.bruto || 0) - (l.repassado || 0))} ≠ ${brl(valor)})`;
+        const c = findCaseByNumber(l.processoDigitos), valor = l.declarar ?? 0, suc = /sucumb/i.test(l.obs || ''); // "honorários sucumbenciais" na observação → entra como sucumbenciais, não como contratuais
+        let acao, aviso = suc ? 'honorários sucumbenciais (pela observação)' : '', ok = valor > 0;
+        if (!l.confere && l.confere != null) aviso = (aviso ? aviso + ' · ' : '') + `bruto − repassado ≠ a declarar (${brl((l.bruto || 0) - (l.repassado || 0))} ≠ ${brl(valor)})`;
         if (c && resultadoOf(c) === 'recebido' && c.financeiroStatus === 'lancado') { acao = 'ja'; ok = false; aviso = 'processo já marcado como recebido e lançado no Financeiro'; }
         else if (c) acao = resultadoOf(c) === 'recebido' ? 'lancar' : 'receber';
         else if (l.processoDigitos.length === 20) { acao = 'criar'; aviso = (aviso ? aviso + ' · ' : '') + 'processo não cadastrado: será criado (só do escritório — ajuste o advogado depois, se for parceria)'; }
         else { acao = 'avulsa'; aviso = (aviso ? aviso + ' · ' : '') + 'número de processo inválido: entra como receita avulsa'; }
-        return { ...l, c, valor, acao, aviso, ok, rotulo: `${l.processo || '(sem número)'} — ${l.cliente}` };
+        return { ...l, c, valor, suc, acao, aviso, ok, rotulo: `${l.processo || '(sem número)'} — ${l.cliente}` };
       }
       if (r.tipo === 'lancamentos') {
         const data = l.data || $('#ct-data').value, dup = S.finance.find(e => e.tipo === l.tipo && e.categoria === l.categoria && Math.abs(num(e.valor) - l.valor) < 0.011 && String(e.data).slice(0, 10) === data);
@@ -712,7 +712,7 @@ function openContabilidade() {
     });
     plano = { tipo: r.tipo, itens };
     const titulo = { alvaras: 'Alvarás judiciais', recebimentos: 'Recebimentos de honorários', lancamentos: 'Lançamentos' }[r.tipo];
-    const desc = it => it.acao === 'receber' ? `encerrar o processo (${esc(it.c.cliente)}): julgado + recebido, receita${isOffice(it.c) ? '' : ' + repasse'}` : it.acao === 'lancar' ? 'processo já recebido: lançar no Financeiro' : it.acao === 'ja' ? 'nada a fazer' : it.acao === 'criar' ? 'cadastrar o processo já encerrado e lançar a receita' : it.acao === 'avulsa' ? 'receita “Alvará de honorários finais” sem processo' : it.acao === 'lanc' ? `${it.tipo === 'receita' ? 'receita' : 'despesa'} “${esc(it.categoria)}”${it.vencimento && it.vencimento > todayISO() ? ` a pagar, vence em ${fmtDate(it.vencimento)} (entra em Contas a pagar)` : ` em ${fmtDate(it.data)}${it.vencimento ? ' · venc. ' + fmtDate(it.vencimento) : ''}`}` : `receita “${it.cat}”${it.c ? ' vinculada a ' + esc(numFmt(it.c)) : ''}`;
+    const desc = it => it.acao === 'receber' ? `encerrar o processo (${esc(it.c.cliente)}): julgado + recebido${it.suc ? ' (sucumbenciais)' : ''}, receita${isOffice(it.c) ? '' : ' + repasse'}` : it.acao === 'lancar' ? 'processo já recebido: lançar no Financeiro' : it.acao === 'ja' ? 'nada a fazer' : it.acao === 'criar' ? 'cadastrar o processo já encerrado e lançar a receita' : it.acao === 'avulsa' ? 'receita “Alvará de honorários finais” sem processo' : it.acao === 'lanc' ? `${it.tipo === 'receita' ? 'receita' : 'despesa'} “${esc(it.categoria)}”${it.vencimento && it.vencimento > todayISO() ? ` a pagar, vence em ${fmtDate(it.vencimento)} (entra em Contas a pagar)` : ` em ${fmtDate(it.data)}${it.vencimento ? ' · venc. ' + fmtDate(it.vencimento) : ''}`}` : `receita “${it.cat}”${it.c ? ' vinculada a ' + esc(numFmt(it.c)) : ''}`;
     $('#ct-preview').innerHTML = `<div class="card-h"><h2>${titulo} — ${esc(r.nome)}</h2><small>${itens.length} linha${itens.length === 1 ? '' : 's'}${r.mes ? ' · ' + ymLabel(r.mes) : ''}</small></div>
       <div class="prov-list" style="max-height:45vh">${itens.map((it, i) => `<label class="prov-row ${it.ok ? '' : 'muted'}" for="ct-i-${i}"><input type="checkbox" id="ct-i-${i}" data-ct="${i}" ${it.ok ? 'checked' : ''}>
         <span class="pr-main"><b>${esc(it.rotulo)}</b><small>${desc(it)}${it.aviso ? ` · <span class="${it.ok ? '' : 'bad'}">${it.aviso}</span>` : ''}</small></span>
@@ -740,11 +740,16 @@ function openContabilidade() {
       const receitas = []; let nProc = 0, nNovos = 0;
       for (const it of sel) {
         if (it.acao === 'receber' || it.acao === 'lancar') {
-          const c = it.c, d = { ...c, fase: natOf(c) === 'administrativo' ? c.fase : 'julgado', resultado: 'recebido', recebido: true, valorCondenacao: it.bruto != null ? it.bruto : c.valorCondenacao, honorariosSucumbenciais: c.honorariosSucumbenciais || 0, valorRecebido: it.valor, sucumbRecebido: 0, dataRecebimento: it.acao === 'lancar' && c.dataRecebimento ? c.dataRecebimento : data, honorariosPretendidos: it.acao === 'receber' ? it.valor : c.honorariosPretendidos };
+          // sucumbenciais: o valor recebido é todo de sucumbência (contratuais recebidos = 0); senão, é honorário contratual
+          const c = it.c, bruto = it.bruto != null ? it.bruto : it.valor;
+          const d = it.suc
+            ? { ...c, fase: natOf(c) === 'administrativo' ? c.fase : 'julgado', resultado: 'recebido', recebido: true, valorCondenacao: Math.max(bruto, num(c.valorCondenacao)), honorariosSucumbenciais: Math.max(bruto, num(c.honorariosSucumbenciais)), valorRecebido: it.valor, sucumbRecebido: it.valor, dataRecebimento: it.acao === 'lancar' && c.dataRecebimento ? c.dataRecebimento : data, honorariosPretendidos: it.acao === 'receber' ? 0 : c.honorariosPretendidos }
+            : { ...c, fase: natOf(c) === 'administrativo' ? c.fase : 'julgado', resultado: 'recebido', recebido: true, valorCondenacao: it.bruto != null ? it.bruto : c.valorCondenacao, honorariosSucumbenciais: c.honorariosSucumbenciais || 0, valorRecebido: it.valor, sucumbRecebido: 0, dataRecebimento: it.acao === 'lancar' && c.dataRecebimento ? c.dataRecebimento : data, honorariosPretendidos: it.acao === 'receber' ? it.valor : c.honorariosPretendidos };
           delete d.id;
           await api.updateCase(c.id, d, { lancarFinanceiro: true, lancamentos: financeEntriesFor({ ...d, id: c.id }), statusAtual: c.financeiroStatus || 'nao' }); nProc++;
         } else if (it.acao === 'criar') {
-          const d = { titularidade: 'escritorio', parceiroId: null, natureza: 'judicial', numeroProcesso: it.processo, cliente: it.cliente, tipoAcao: 'Ação judicial (alvará importado)', dataProtocolo: data, baseHonorarios: 'fixo', honorariosPretendidos: it.valor, honorariosIniciais: 0, custoLead: 0, pctParceiro: 0, pctNosso: 100, fase: 'julgado', resultado: 'recebido', recebido: true, valorCondenacao: it.bruto != null ? it.bruto : null, honorariosSucumbenciais: 0, valorRecebido: it.valor, sucumbRecebido: 0, dataRecebimento: data, fluxoRecebimento: 'escritorio', temCorretor: false, observacoes: [it.obs ? 'Vara/observação: ' + it.obs : '', 'Cadastrado pela importação do fechamento mensal — confira advogado/parceria.'].filter(Boolean).join(' ') };
+          const bruto = it.bruto != null ? it.bruto : it.valor;
+          const d = { titularidade: 'escritorio', parceiroId: null, natureza: 'judicial', numeroProcesso: it.processo, cliente: it.cliente, tipoAcao: it.suc ? 'Ação judicial (sucumbenciais importados)' : 'Ação judicial (alvará importado)', dataProtocolo: data, baseHonorarios: 'fixo', honorariosPretendidos: it.suc ? 0 : it.valor, honorariosIniciais: 0, custoLead: 0, pctParceiro: 0, pctNosso: 100, fase: 'julgado', resultado: 'recebido', recebido: true, valorCondenacao: it.suc ? bruto : (it.bruto != null ? it.bruto : null), honorariosSucumbenciais: it.suc ? bruto : 0, valorRecebido: it.valor, sucumbRecebido: it.suc ? it.valor : 0, dataRecebimento: data, fluxoRecebimento: 'escritorio', temCorretor: false, observacoes: [it.obs ? 'Vara/observação: ' + it.obs : '', 'Cadastrado pela importação do fechamento mensal — confira advogado/parceria.'].filter(Boolean).join(' ') };
           await api.createCase(d, { lancarFinanceiro: true, lancamentos: financeEntriesFor({ ...d, id: null }), statusAtual: 'nao' }); nNovos++;
         } else if (it.acao === 'avulsa') receitas.push({ tipo: 'receita', categoria: 'Alvará de honorários finais', descricao: `Processo ${it.processo} — ${it.cliente}`, valor: it.valor, data, observacoes: [it.obs, it.bruto != null ? `Bruto ${brl(it.bruto)}, repassado ao cliente ${brl(it.repassado || 0)}` : ''].filter(Boolean).join(' · ') });
         else if (it.acao === 'lanc') { const futuro = it.vencimento && it.vencimento > todayISO(); receitas.push({ tipo: it.tipo, categoria: it.categoria, descricao: it.descricao, valor: it.valor, data: futuro ? it.vencimento : it.data, vencimento: it.vencimento || null, status: futuro ? 'provisionado' : 'realizado', observacoes: 'Importado da planilha' }); }

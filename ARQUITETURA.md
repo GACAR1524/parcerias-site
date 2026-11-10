@@ -385,7 +385,7 @@ com conferência bruto − repassado = a declarar) e *lançamentos* (DATA | TIPO
 DESCRIÇÃO | VALOR | VENCIMENTO — guias de imposto). A tela "Importar lançamentos" (Financeiro)
 monta a prévia e grava pelos endpoints normais, só o que for confirmado: alvará casa com o
 processo pelo número e **encerra o processo** (julgado + recebido, `valor_recebido` = a declarar,
-`valor_condenacao` = bruto, receita + repasse); processo inexistente é **criado** só do escritório
+`valor_condenacao` = bruto, receita + repasse); processo inexistente é **criado** só do escritório; se a observação da linha mencionar **sucumbenciais**, o valor entra como honorários sucumbenciais recebidos (contratuais recebidos = 0, `honorarios_sucumbenciais` = bruto)
 já encerrado (para o escritório ajustar depois); recebimento casa pelo nome do cliente, aponta
 receita igual já existente no mês e entra como *Honorários iniciais* (ou *de êxito*) vinculada ao
 processo; guia com vencimento futuro entra como despesa **a pagar** (provisionada), vencida ou sem

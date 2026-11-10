@@ -501,20 +501,21 @@ try {
   r = await call('a', 'POST', `/ponto/${pendId}/decisao`, { decisao: 'aprovado', observacao: 'estava em audiência' });
   check('admin aprova a batida pendente', r.status === 200 && r.data.entry.status === 'aprovado' && r.data.entry.observacao === 'estava em audiência', r);
   // ajuste (esqueci de bater)
-  r = await call('e', 'POST', '/ponto/ajuste', { data: '2026-09-28', hora: '08:05', tipo: 'entrada' });
+  const mesAnt = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })(); // mês anterior: dentro do período padrão de consulta do ponto
+  r = await call('e', 'POST', '/ponto/ajuste', { data: `${mesAnt}-28`, hora: '08:05', tipo: 'entrada' });
   check('ajuste sem justificativa é recusado', r.status === 400, r);
   r = await call('e', 'POST', '/ponto/ajuste', { data: '2099-01-01', hora: '08:05', tipo: 'entrada', justificativa: 'x' });
   check('ajuste em data futura é recusado', r.status === 400, r);
-  r = await call('e', 'POST', '/ponto/ajuste', { data: '2026-09-28', hora: '08:05', tipo: 'entrada', justificativa: 'celular sem bateria' });
+  r = await call('e', 'POST', '/ponto/ajuste', { data: `${mesAnt}-28`, hora: '08:05', tipo: 'entrada', justificativa: 'celular sem bateria' });
   check('pedido de ajuste entra como pendente, origem ajuste', r.status === 201 && r.data.entry.origem === 'ajuste' && r.data.entry.status === 'pendente' && r.data.entry.hora === '08:05:00', r);
   const ajId = r.data.id;
   r = await call('a', 'POST', `/ponto/${ajId}/decisao`, { decisao: 'recusado', observacao: 'sem comprovação' });
   check('admin recusa o ajuste', r.status === 200 && r.data.entry.status === 'recusado', r);
-  r = await call('a', 'POST', '/ponto/manual', { partnerId: eid, data: '2026-09-28', hora: '12:02', tipo: 'saida', observacao: 'informado por WhatsApp' });
+  r = await call('a', 'POST', '/ponto/manual', { partnerId: eid, data: `${mesAnt}-28`, hora: '12:02', tipo: 'saida', observacao: 'informado por WhatsApp' });
   check('batida manual do admin entra aprovada', r.status === 201 && r.data.entry.origem === 'manual' && r.data.entry.status === 'aprovado', r);
-  r = await call('a', 'POST', '/ponto/manual', { partnerId: pid, data: '2026-09-28', hora: '12:02', tipo: 'saida' });
+  r = await call('a', 'POST', '/ponto/manual', { partnerId: pid, data: `${mesAnt}-28`, hora: '12:02', tipo: 'saida' });
   check('batida manual para parceiro é recusada', r.status === 400, r);
-  r = await call('e', 'GET', '/ponto?mes=2026-09');
+  r = await call('e', 'GET', `/ponto?mes=${mesAnt}`);
   check('estagiário lista só os próprios registros do mês', r.status === 200 && r.data.ponto.length === 2 && r.data.ponto.every(x => x.partnerId === eid), r.data);
   r = await call('a', 'GET', `/ponto?partnerId=${eid}`);
   check('admin lista os registros da pessoa (período padrão)', r.status === 200 && r.data.ponto.length >= 4 && r.data.config.ips.length === 1, r.data);

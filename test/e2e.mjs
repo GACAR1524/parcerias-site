@@ -232,7 +232,8 @@ try {
     // reajuste: muda o valor de um mês a pagar e aplica aos seguintes
     const alvoYm = mesesRec[6 - (aPagarEsp - 1)]; // primeiro mês ainda a pagar depois da baixa
     await page.click(`tr[data-fin]:has-text("Internet — ${['julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'][+alvoYm.slice(5, 7) - 7]}/2026")`); await page.waitForSelector('#fn-form');
-    check('edição de lançamento recorrente a pagar oferece aplicar o novo valor aos seguintes', await page.isVisible('#fn-aplicar') && /Despesa a pagar/.test(await page.textContent('#fn-form')));
+    const temSeguintes = aPagarEsp - 2 > 0; // só há "aplicar aos seguintes" quando existe mês a pagar depois do editado
+    check(`edição de lançamento recorrente a pagar ${temSeguintes ? 'oferece' : 'não oferece (último mês)'} aplicar o novo valor aos seguintes`, (await page.isVisible('#fn-aplicar')) === temSeguintes && /Despesa a pagar/.test(await page.textContent('#fn-form')));
     if (aPagarEsp - 2 > 0) {
       await page.fill('#fn-valor', '300'); await page.check('#fn-aplicar'); await page.click('#fn-save');
       await page.waitForFunction(n => !document.querySelector('#fn-form') && [...document.querySelectorAll('tr[data-fin]')].filter(tr => tr.textContent.includes('Internet') && tr.textContent.includes('300,00')).length === n, aPagarEsp - 1, { timeout: 8000 });
@@ -379,6 +380,24 @@ try {
   await page.click('#ct-ok');
   await page.waitForFunction(() => !document.querySelector('#ct-file') && [...document.querySelectorAll('tr[data-fin]')].some(tr => tr.textContent.includes('NOVO CLIENTE IMPORTADO')), null, { timeout: 8000 });
   check('receita importada aparece no Financeiro só com o nome (sem CPF)', !/987\.654\.321-00/.test(await page.textContent('tr[data-fin]:has-text("NOVO CLIENTE IMPORTADO")')) && !/987\.654\.321-00/.test(await page.textContent('#view')));
+  // importar alvarás: honorários sucumbenciais (pela observação) em processo ainda não cadastrado → criado já encerrado, como sucumbenciais
+  await page.click('[data-act="contabilidade"]'); await page.waitForSelector('#ct-file');
+  const wbAlv = new ExcelJS.Workbook(); const wsAlv = wbAlv.addWorksheet('Alvarás Judiciais');
+  [['Nº DO PROCESSO JUDICIAL', 'NOME DO CLIENTE', 'CPF / CNPJ', 'VALOR BRUTO (R$)', 'VALOR REPASSADO (R$)', 'VALOR A DECLARAR (R$)', 'OBSERVAÇÃO / VARA'], ['0887215-85.2024.8.10.0001', 'CLIENTE RPV SUCUMBENCIAL', '111.222.333-44', 30865.6, 0, null, 'Honorários sucumbenciais (RPV contra o Estado) — 8ª Vara da Fazenda Pública. 100% do escritório.'], ['TOTAL', '', '', 30865.6, 0, 30865.6, '']].forEach(r => wsAlv.addRow(r));
+  await page.setInputFiles('#ct-file', { name: `Alvaras_Judiciais_Mes_${mmImp}_${aaImp}.xlsx`, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(await wbAlv.xlsx.writeBuffer()) });
+  await page.waitForSelector('input[data-ct]', { timeout: 8000 });
+  const prevAlv = (await page.textContent('#ct-preview')).replace(/ /g, ' ');
+  check('prévia do alvará: a declarar = bruto − repassado (30.865,60), reconhece sucumbenciais pela observação e vai criar o processo', /30\.865,60/.test(prevAlv) && /sucumbenciais \(pela observação\)/.test(prevAlv) && /processo não cadastrado/.test(prevAlv) && !/111\.222\.333-44/.test(prevAlv));
+  await page.click('#ct-ok');
+  await page.waitForFunction(() => !document.querySelector('#ct-file'), null, { timeout: 8000 });
+  await page.click('[data-tab="cases"]'); await page.waitForSelector('tr[data-id]');
+  await page.waitForFunction(() => [...document.querySelectorAll('tr[data-id]')].some(tr => tr.textContent.includes('CLIENTE RPV SUCUMBENCIAL')), null, { timeout: 8000 });
+  const rowRpv = (await page.textContent('tr[data-id]:has-text("CLIENTE RPV SUCUMBENCIAL")')).replace(/ /g, ' ');
+  check('processo criado já encerrado e recebido, R$ 30.865,60 todo em sucumbenciais, só do escritório', /Recebido/.test(rowRpv) && /30\.865,60/.test(rowRpv) && /30,9 mil sucumb\./.test(rowRpv) && /Só do escritório/.test(rowRpv) && /no financeiro/.test(rowRpv));
+  await page.click('tr[data-id]:has-text("CLIENTE RPV SUCUMBENCIAL")'); await page.waitForSelector('#case-form');
+  check('no cadastro: condenação e sucumbenciais = 30.865,60; contratuais recebidos = 0', (await page.inputValue('#c-vcond')) === '30.865,60' && (await page.inputValue('#c-vsuc')) === '30.865,60' && (await page.inputValue('#c-vrecs')) === '30.865,60' && ['', '0,00'].includes(await page.inputValue('#c-vrecc')));
+  await page.click('#c-cancel'); await page.waitForTimeout(100);
+  await page.click('[data-tab="finance"]'); await page.waitForSelector('.provbox');
 
   await page.selectOption('#ff-sit', 'provisionado'); await page.waitForTimeout(200);
   check('filtro "só provisionados" lista a parcela futura (e as contas a pagar da recorrência)', (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).filter(t => /parcela/.test(t)).length === 1 && (await page.$$eval('tr[data-fin]', trs => trs.map(t => t.textContent))).every(t => /4\/4|A pagar/.test(t)));
